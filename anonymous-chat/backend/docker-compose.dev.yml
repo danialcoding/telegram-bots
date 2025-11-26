@@ -1,0 +1,36 @@
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: anonymous_chat_db_dev
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres123
+      POSTGRES_DB: anonymous_chat
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data_dev:/var/lib/postgresql/data
+    networks:
+      - app_network_dev
+
+  redis:
+    image: redis:7-alpine
+    container_name: anonymous_chat_redis_dev
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data_dev:/data
+    # اضافه کردن پسورد به Redis
+    command: redis-server --appendonly yes --requirepass "redis123"
+    networks:
+      - app_network_dev
+
+volumes:
+  postgres_data_dev:
+  redis_data_dev:
+
+networks:
+  app_network_dev:
+    driver: bridge
