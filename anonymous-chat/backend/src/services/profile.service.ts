@@ -3,6 +3,7 @@ import { pool } from "../database/db";
 import { CustomError } from "../utils/errors";
 import crypto from "crypto";
 import { Province, City } from "../utils/locations";
+import logger from "../utils/logger";
 
 interface CreateProfileData {
   userId: number;
@@ -20,13 +21,11 @@ export interface UpdateProfileData {
   display_name?: string;
   gender?: "male" | "female";
   age?: number;
-  province?: string;
-  city?: string;
-  provinceId?: number; // ✅ اضافه شد
-  cityId?: number; // ✅ اضافه شد
+  province?: number;
+  city?: number;
   bio?: string | null;
   photo_url?: string | null;
-  photoFileId?: string; // ✅ اضافه شد
+  photoFileId?: string;
 }
 
 interface Profile {
@@ -65,15 +64,15 @@ class ProfileService {
     let exists = true;
 
     while (exists) {
-      // تولید عدد 6 رقمی تصادفی
-      customId = Math.floor(100000 + Math.random() * 900000).toString();
-
-      // بررسی یکتا بودن
+      customId =
+        "USER" +
+        Math.floor(Math.random() * 1000000)
+          .toString()
+          .padStart(6, "0");
       const result = await pool.query(
-        "SELECT id FROM profiles WHERE custom_id = $1",
+        "SELECT 1 FROM profiles WHERE custom_id = $1",
         [customId]
       );
-
       exists = result.rows.length > 0;
     }
 
@@ -88,15 +87,30 @@ class ProfileService {
     let exists = true;
 
     while (exists) {
-      // تولید توکن 32 کاراکتری
       token = crypto.randomBytes(16).toString("hex");
-
-      // بررسی یکتا بودن
       const result = await pool.query(
         "SELECT id FROM profiles WHERE anonymous_link_token = $1",
         [token]
       );
+      exists = result.rows.length > 0;
+    }
 
+    return token!;
+  }
+
+  /**
+   * ✅ تولید anonymous_link_token یکتا
+   */
+  private async generateAnonymousToken(): Promise<string> {
+    let token: string;
+    let exists = true;
+
+    while (exists) {
+      token = crypto.randomBytes(32).toString("hex");
+      const result = await pool.query(
+        "SELECT 1 FROM profiles WHERE anonymous_link_token = $1",
+        [token]
+      );
       exists = result.rows.length > 0;
     }
 
@@ -112,7 +126,6 @@ class ProfileService {
     try {
       await client.query("BEGIN");
 
-      // بررسی وجود پروفایل قبلی
       const existingProfile = await client.query(
         "SELECT id FROM profiles WHERE user_id = $1",
         [data.userId]
@@ -122,11 +135,9 @@ class ProfileService {
         throw new CustomError("شما قبلاً پروفایل ساخته‌اید.", 400);
       }
 
-      // تولید Custom ID و Anonymous Token
       const customId = await this.generateUniqueCustomId();
       const anonymousToken = await this.generateUniqueAnonymousToken();
 
-      // ایجاد پروفایل
       const result = await client.query(
         `INSERT INTO profiles 
         (user_id, custom_id, gender, name, age, bio, province, city, photo_file_id, anonymous_link_token)
@@ -164,7 +175,6 @@ class ProfileService {
       "SELECT * FROM profiles WHERE user_id = $1",
       [userId]
     );
-
     return result.rows.length > 0 ? result.rows[0] : null;
   }
 
@@ -176,7 +186,6 @@ class ProfileService {
       "SELECT * FROM profiles WHERE custom_id = $1",
       [customId]
     );
-
     return result.rows.length > 0 ? result.rows[0] : null;
   }
 
@@ -188,103 +197,82 @@ class ProfileService {
       "SELECT * FROM profiles WHERE anonymous_link_token = $1",
       [token]
     );
-
     return result.rows.length > 0 ? result.rows[0] : null;
   }
+
   /**
-   * به‌روزرسانی پروفایل
+   * ✅ به‌روزرسانی یا ایجاد پروفایل
    */
   async updateProfile(
     userId: number,
-    data: UpdateProfileData
-  ): Promise<Profile> {
-    const profile = await this.getProfileByUserId(userId);
-
-    if (!profile) {
-      throw new CustomError("پروفایل یافت نشد.", 404);
+    data: {
+      gender?: "male" | "female";
+      age?: number;
+      province?: number;
+      city?: number;
+      bio?: string | null;
     }
+  ): Promise<void> {
+    try {
+      const existingProfile = await this.getProfile(userId);
 
-    const updates: string[] = [];
-    const values: any[] = [];
-    let paramCount = 1;
+      if (existingProfile) {
+        const queryText = `
+        UPDATE profiles
+        SET
+          gender = COALESCE($2, gender),
+          age = COALESCE($3, age),
+          province = COALESCE($4, province),
+          city = COALESCE($5, city),
+          bio = COALESCE($6, bio),
+          updated_at = CURRENT_TIMESTAMP
+        WHERE user_id = $1
+      `;
 
-    if (data.name !== undefined) {
-      updates.push(`name = $${paramCount++}`);
-      values.push(data.name);
+        await pool.query(queryText, [
+          userId,
+          data.gender,
+          data.age,
+          data.province,
+          data.city,
+          data.bio,
+        ]);
+      } else {
+        const user = await pool.query(
+          "SELECT first_name FROM users WHERE id = $1",
+          [userId]
+        );
+        const displayName = user.rows[0]?.first_name || "کاربر";
+
+        const customId = await this.generateUniqueCustomId();
+        const anonymousToken = await this.generateAnonymousToken();
+
+        const queryText = `
+        INSERT INTO profiles (
+          user_id, custom_id, display_name, gender, age, 
+          province, city, bio, anonymous_link_token
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      `;
+
+        await pool.query(queryText, [
+          userId,
+          customId,
+          displayName,
+          data.gender,
+          data.age,
+          data.province,
+          data.city,
+          data.bio,
+          anonymousToken,
+        ]);
+      }
+
+      logger.info(`✅ Profile updated/created for user ${userId}`);
+    } catch (error) {
+      logger.error("❌ Update profile error:", error);
+      throw new CustomError("خطا در به‌روزرسانی پروفایل", 500);
     }
-
-    if (data.display_name !== undefined) {
-      updates.push(`display_name = $${paramCount++}`);
-      values.push(data.display_name);
-    }
-
-    if (data.gender !== undefined) {
-      updates.push(`gender = $${paramCount++}`);
-      values.push(data.gender);
-    }
-
-    if (data.age !== undefined) {
-      updates.push(`age = $${paramCount++}`);
-      values.push(data.age);
-    }
-
-    if (data.bio !== undefined) {
-      updates.push(`bio = $${paramCount++}`);
-      values.push(data.bio);
-    }
-
-    // ✅ پشتیبانی از provinceId
-    if (data.provinceId !== undefined) {
-      updates.push(`province_id = $${paramCount++}`);
-      values.push(data.provinceId);
-    }
-
-    // ✅ پشتیبانی از province (string)
-    if (data.province !== undefined) {
-      updates.push(`province = $${paramCount++}`);
-      values.push(data.province);
-    }
-
-    // ✅ پشتیبانی از cityId
-    if (data.cityId !== undefined) {
-      updates.push(`city_id = $${paramCount++}`);
-      values.push(data.cityId);
-    }
-
-    // ✅ پشتیبانی از city (string)
-    if (data.city !== undefined) {
-      updates.push(`city = $${paramCount++}`);
-      values.push(data.city);
-    }
-
-    // ✅ پشتیبانی از photoFileId
-    if (data.photoFileId !== undefined) {
-      updates.push(`photo_file_id = $${paramCount++}`);
-      values.push(data.photoFileId);
-    }
-
-    // ✅ پشتیبانی از photo_url
-    if (data.photo_url !== undefined) {
-      updates.push(`photo_url = $${paramCount++}`);
-      values.push(data.photo_url);
-    }
-
-    if (updates.length === 0) {
-      return profile;
-    }
-
-    updates.push(`updated_at = NOW()`);
-    values.push(userId);
-
-    const query = `
-    UPDATE profiles 
-    SET ${updates.join(", ")}
-    WHERE user_id = $${paramCount}
-    RETURNING *
-  `;
-
-    const result = await pool.query(query, values);
-    return result.rows[0];
   }
 
   /**
@@ -296,14 +284,12 @@ class ProfileService {
     try {
       await client.query("BEGIN");
 
-      // بررسی وجود پروفایل
       const profile = await this.getProfileByUserId(userId);
 
       if (!profile) {
         throw new CustomError("پروفایل یافت نشد.", 404);
       }
 
-      // بررسی اینکه کاربر در چت فعال نباشد
       const activeChat = await client.query(
         `SELECT id FROM active_chats 
          WHERE (user1_id = $1 OR user2_id = $1) AND status = 'active'`,
@@ -317,7 +303,6 @@ class ProfileService {
         );
       }
 
-      // حذف پروفایل
       await client.query("DELETE FROM profiles WHERE user_id = $1", [userId]);
 
       await client.query("COMMIT");
@@ -386,16 +371,13 @@ class ProfileService {
     const whereClause =
       conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
 
-    // شمارش کل
     const countQuery = `SELECT COUNT(*) FROM profiles ${whereClause}`;
     const countResult = await pool.query(countQuery, values);
     const total = parseInt(countResult.rows[0].count);
 
-    // محاسبه صفحه‌بندی
     const offset = (page - 1) * limit;
     const pages = Math.ceil(total / limit);
 
-    // دریافت پروفایل‌ها
     values.push(limit, offset);
     const query = `
       SELECT * FROM profiles 
@@ -516,6 +498,164 @@ class ProfileService {
   }
 
   /**
+   * ✅ دریافت پروفایل کامل (برای خود کاربر - شامل لینک ناشناس و تنظیمات)
+   */
+  async getFullProfile(userId: number) {
+    const result = await pool.query(
+      `SELECT 
+        p.*,
+        u.telegram_id,
+        u.username,
+        u.first_name,
+        u.last_name,
+        u.is_blocked,
+        u.block_reason,
+        u.blocked_at,
+        u.unblock_fine
+      FROM profiles p
+      LEFT JOIN users u ON p.user_id = u.id
+      WHERE p.user_id = $1`,
+      [userId]
+    );
+
+    return result.rows.length > 0 ? result.rows[0] : null;
+  }
+
+  /**
+   * ✅ دریافت پروفایل عمومی با جزئیات کامل بلاک
+   */
+  async getPublicProfile(
+    identifier: { customId: string } | { userId: number },
+    viewerId?: number
+  ) {
+    const isCustomId = "customId" in identifier;
+
+    const query = `
+      SELECT 
+        p.id,
+        p.user_id,
+        p.custom_id,
+        p.display_name,
+        p.gender,
+        p.age,
+        p.bio,
+        p.province,
+        p.city,
+        p.photo_file_id,
+        p.rating,
+        p.total_chats,
+        p.created_at,
+        p.updated_at,
+        CASE 
+          WHEN p.show_likes = TRUE THEN p.likes_count 
+          ELSE NULL 
+        END as likes_count,
+        u.is_online,
+        u.last_activity,
+        u.is_blocked as is_admin_blocked,
+        u.block_reason,
+        u.unblock_fine,
+        ${
+          viewerId
+            ? `
+          EXISTS(
+            SELECT 1 FROM likes 
+            WHERE liker_id = $2 AND liked_profile_id = p.id
+          ) as is_liked_by_viewer,
+          EXISTS(
+            SELECT 1 FROM blocks 
+            WHERE blocker_id = $2 AND blocked_id = p.user_id
+          ) as viewer_blocked_target,
+          EXISTS(
+            SELECT 1 FROM blocks 
+            WHERE blocker_id = p.user_id AND blocked_id = $2
+          ) as target_blocked_viewer,
+          EXISTS(
+            SELECT 1 FROM contacts 
+            WHERE user_id = $2 AND contact_user_id = p.user_id
+          ) as is_in_contacts,
+          EXISTS(
+            SELECT 1 FROM chats
+            WHERE (user1_id = $2 AND user2_id = p.user_id)
+               OR (user1_id = p.user_id AND user2_id = $2)
+          ) as has_chat_history
+        `
+            : `
+          FALSE as is_liked_by_viewer,
+          FALSE as viewer_blocked_target,
+          FALSE as target_blocked_viewer,
+          FALSE as is_in_contacts,
+          FALSE as has_chat_history
+        `
+        }
+      FROM profiles p
+      JOIN users u ON p.user_id = u.id
+      WHERE ${isCustomId ? "p.custom_id = $1" : "p.user_id = $1"}
+    `;
+
+    const params = isCustomId
+      ? viewerId
+        ? [identifier.customId, viewerId]
+        : [identifier.customId]
+      : viewerId
+      ? [identifier.userId, viewerId]
+      : [identifier.userId];
+
+    const result = await pool.query(query, params);
+
+    // اضافه کردن فیلد ترکیبی has_block_relation
+    if (result.rows[0]) {
+      result.rows[0].has_block_relation =
+        result.rows[0].viewer_blocked_target ||
+        result.rows[0].target_blocked_viewer;
+    }
+
+    return result.rows[0] || null;
+  }
+
+  /**
+   * ✅ ثبت بازدید پروفایل
+   */
+  async recordProfileView(viewerId: number, profileUserId: number): Promise<void> {
+    await pool.query(
+      `INSERT INTO profile_views (viewer_id, profile_user_id)
+       VALUES ($1, $2)
+       ON CONFLICT (viewer_id, profile_user_id) 
+       DO UPDATE SET viewed_at = CURRENT_TIMESTAMP`,
+      [viewerId, profileUserId]
+    );
+  }
+
+  /**
+   * ✅ به‌روزرسانی تنظیمات حریم خصوصی
+   */
+  async updatePrivacySettings(
+    userId: number,
+    settings: {
+      show_likes?: boolean;
+      alert_profile_view?: boolean;
+      alert_profile_like?: boolean;
+    }
+  ): Promise<void> {
+    const queryText = `
+      UPDATE profiles
+      SET
+        show_likes = COALESCE($2, show_likes),
+        alert_profile_view = COALESCE($3, alert_profile_view),
+        alert_profile_like = COALESCE($4, alert_profile_like),
+        updated_at = CURRENT_TIMESTAMP
+      WHERE user_id = $1
+    `;
+
+    await pool.query(queryText, [
+      userId,
+      settings.show_likes,
+      settings.alert_profile_view,
+      settings.alert_profile_like,
+    ]);
+  }
+
+  /**
    * آپدیت عکس پروفایل
    */
   async updateProfilePhoto(userId: number, photoFileId: string): Promise<void> {
@@ -535,7 +675,7 @@ class ProfileService {
     const result = await pool.query(
       `SELECT 
       CASE WHEN 
-        name IS NOT NULL AND 
+        display_name IS NOT NULL AND 
         gender IS NOT NULL AND 
         age IS NOT NULL AND 
         province IS NOT NULL AND 

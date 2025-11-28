@@ -2,11 +2,10 @@ import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { config } from '../../config';
 import { adminService } from '../../services/admin.service';
-import { MiddlewareFn } from 'telegraf';
-import MyContext from '../index';
 import { userService } from '../../services/user.service';
 import { Context } from 'telegraf';
 import logger from '../../utils/logger';
+
 /**
  * Interface برای JWT Payload
  */
@@ -114,47 +113,16 @@ export function requireSuperAdmin(
   next();
 }
 
-// export const authMiddleware: MiddlewareFn<MyContext> = async (ctx, next) => {
-//   try {
-//     const userId = ctx.from?.id;
-
-//     if (!userId) {
-//       logger.warn('⚠️ Message received without user ID');
-//       return;
-//     }
-
-//     // اگر کاربر وجود ندارد، ایجاد کن
-//     const user = await userService.findById(userId);
-//     if (!user) {
-//       await userService.create({
-//         telegram_id: userId,
-//         username: ctx.from.username || `user_${userId}`,
-//         first_name: ctx.from.first_name,
-//         last_name: ctx.from.last_name || '',
-//       });
-//       logger.info(`✅ New user registered: ${userId}`);
-//     }
-
-//     // ذخیره اطلاعات کاربر در context
-//     ctx.user = {
-//       id: userId,
-//       username: ctx.from.username || `user_${userId}`,
-//       first_name: ctx.from.first_name,
-//     };
-
-//     await next();
-//   } catch (error) {
-//     logger.error('❌ Auth middleware error:', error);
-//     await next();
-//   }
-// };
-
-
+/**
+ * ✅ Middleware احراز هویت برای ربات تلگرام
+ */
 export const authMiddleware = async (ctx: Context, next: () => Promise<void>) => {
   const telegramId = ctx.from?.id;
   const username = ctx.from?.username;
   const firstName = ctx.from?.first_name;
   const lastName = ctx.from?.last_name;
+
+  logger.debug('⚠️ Auth Middleware triggered for user:', { telegramId, username });
 
   if (!telegramId) {
     await ctx.reply('❌ خطا در شناسایی کاربر');
@@ -162,41 +130,45 @@ export const authMiddleware = async (ctx: Context, next: () => Promise<void>) =>
   }
 
   try {
-    // ✅ 1. ابتدا چک کن که کاربر وجود داره یا نه
+    // ✅ 1. پیدا کردن کاربر
     let user = await userService.findByTelegramId(telegramId);
 
     // ✅ 2. اگر کاربر وجود نداشت، ایجاد کن
     if (!user) {
       logger.info(`👤 New user detected: ${telegramId}`);
 
-      // بررسی کد معرف (اگر وجود داشته باشد)
       let referrerId: number | undefined;
       
-      if (ctx.startPayload) {
-        const referralCode = ctx.startPayload;
-        logger.debug(`🔗 Referral code detected: ${referralCode}`);
+      // ✅ استخراج کد معرف از /start command به صورت دستی
+      if (ctx.message && 'text' in ctx.message) {
+        const text = ctx.message.text;
+        const match = text.match(/^\/start\s+(.+)$/);
+        
+        if (match && match[1]) {
+          const referralCode = match[1];
+          logger.debug(`🔗 Referral code detected: ${referralCode}`);
 
-        try {
-          const referrer = await userService.findUserByReferralCode(referralCode);
-          
-          if (referrer && referrer.id !== telegramId) {
-            referrerId = referrer.id;
-            logger.info(`✅ Valid referrer found: ${referrerId}`);
-          } else {
-            logger.warn(`⚠️ Invalid referral code: ${referralCode}`);
+          try {
+            const referrer = await userService.findUserByReferralCode(referralCode);
+            
+            if (referrer && referrer.telegram_id !== telegramId) {
+              referrerId = referrer.id;
+              logger.info(`✅ Valid referrer found: ${referrerId}`);
+            } else {
+              logger.warn(`⚠️ Invalid referral code: ${referralCode}`);
+            }
+          } catch (error) {
+            logger.error('❌ Error checking referral code:', error);
           }
-        } catch (error) {
-          logger.error('❌ Error checking referral code:', error);
         }
       }
 
-      // ایجاد کاربر جدید
+      // ✅ ساخت کاربر جدید با فیلدهای صحیح
       user = await userService.create({
-        telegramId,
-        username,
-        firstName,
-        lastName,
-        referrerId,
+        telegram_id: telegramId,           // ✅ با underscore
+        username: username || null,
+        first_name: firstName || 'کاربر',  // ✅ مقدار پیش‌فرض
+        last_name: lastName || null,
       });
 
       logger.info(`✅ New user created: ${user.id}`, {
@@ -204,29 +176,52 @@ export const authMiddleware = async (ctx: Context, next: () => Promise<void>) =>
         username,
         hasReferrer: !!referrerId,
       });
+
+      // ✅ ثبت رفرال در صورت وجود معرف
+      if (referrerId) {
+        try {
+          const processed = await userService.processReferral(user.id, referrerId);
+          if (processed) {
+            logger.info(`✅ Referral processed: ${user.id} referred by ${referrerId}`);
+          }
+        } catch (error) {
+          logger.error('❌ Error processing referral:', error);
+        }
+      }
     } else {
-      // ✅ 3. اگر کاربر وجود داشت، اطلاعات رو به‌روز کن
+      // ✅ 3. به‌روزرسانی اطلاعات در صورت تغییر
       if (
         user.username !== username ||
         user.first_name !== firstName ||
         user.last_name !== lastName
       ) {
-        await userService.updateUserInfo(
-          user.id,
-          username,
-          firstName,
-        );
+        try {
+          await userService.updateUserInfo(user.id, username, firstName);
+          logger.debug(`🔄 User info updated: ${user.id}`);
+        } catch (error) {
+          logger.error('❌ Error updating user info:', error);
+        }
+      }
 
-        logger.debug(`🔄 User profile updated: ${user.id}`);
+      // ✅ به‌روزرسانی آخرین فعالیت
+      try {
+        await userService.updateLastActivity(user.id);
+      } catch (error) {
+        logger.error('❌ Error updating last activity:', error);
       }
     }
 
-    // ✅ 4. چک کردن وضعیت کاربر
+    // ✅ 4. چک کردن بلاک بودن
     if (user.is_blocked) {
+      const blockDate = user.blocked_at 
+        ? new Date(user.blocked_at).toLocaleDateString('fa-IR')
+        : 'نامشخص';
+
       await ctx.reply(
         `🚫 حساب شما مسدود شده است.\n\n` +
         `📋 دلیل: ${user.block_reason || 'نامشخص'}\n` +
-        `📅 تاریخ: ${user.blocked_at ? new Date(user.blocked_at).toLocaleDateString('fa-IR') : 'نامشخص'}`
+        `📅 تاریخ: ${blockDate}\n\n` +
+        `💰 جریمه رفع مسدودیت: ${user.unblock_fine || 50} سکه`
       );
       return;
     }
@@ -237,30 +232,29 @@ export const authMiddleware = async (ctx: Context, next: () => Promise<void>) =>
     logger.debug(`✅ User authenticated: ${user.id}`, {
       telegramId,
       username,
-      hasProfile: userService.hasProfile(user.id),
+      hasProfile: await userService.hasProfile(user.id),
     });
 
     return next();
+    
   } catch (error) {
     logger.error('❌ Auth middleware error:', error);
-    await ctx.reply('❌ خطایی رخ داد. لطفاً دوباره تلاش کنید.');
+    
+    // ✅ نمایش پیام خطای دقیق‌تر
+    if (error instanceof Error) {
+      logger.error('Error details:', {
+        message: error.message,
+        stack: error.stack,
+      });
+    }
+    
+    await ctx.reply(
+      '❌ خطایی در احراز هویت رخ داد.\n' +
+      'لطفاً چند لحظه صبر کنید و دوباره تلاش کنید.'
+    );
     return;
   }
 };
-
-// // تعریف User Interface در Context
-// declare global {
-//   namespace Express {
-//     interface Request {
-//       user?: {
-//         id: number;
-//         username: string;
-//         first_name?: string;
-//       };
-//       admin?: any;
-//     }
-//   }
-// }
 
 // تعریف Types برای Express
 declare global {

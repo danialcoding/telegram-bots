@@ -38,7 +38,6 @@ CREATE TYPE admin_role AS ENUM ('super_admin', 'admin', 'moderator');
 
 -- ==================== TABLES (CORRECT ORDER) ====================
 
--- -------------------- USERS (No FK) --------------------
 
 -- -------------------- USERS (No FK) --------------------
 
@@ -58,6 +57,9 @@ CREATE TABLE users (
     block_reason TEXT,                     -- تغییر از ban_reason
     blocked_at TIMESTAMP,                  -- تغییر از banned_at
     unblock_fine INTEGER DEFAULT 50,      -- اضافه شده
+
+    is_silent BOOLEAN DEFAULT FALSE,              -- ✅ اضافه شد
+    silent_until TIMESTAMP,  
     
     is_online BOOLEAN DEFAULT FALSE,
     last_activity TIMESTAMP DEFAULT NOW(),
@@ -85,11 +87,15 @@ CREATE TABLE profiles (
     age INTEGER NOT NULL,
     bio TEXT,
     
-     province INTEGER NOT NULL,           -- ✅ تغییر به INTEGER
+    province INTEGER NOT NULL,           -- ✅ تغییر به INTEGER
     city INTEGER NOT NULL,               -- ✅ تغییر به INTEGER
     
     photo_file_id TEXT,                  -- ✅ اضافه شد
     likes_count INTEGER DEFAULT 0,       -- ✅ اضافه شد
+
+    show_likes BOOLEAN DEFAULT TRUE,               -- ✅ اضافه شد
+    alert_profile_view BOOLEAN DEFAULT FALSE,       -- ✅ اضافه شد
+    alert_profile_like BOOLEAN DEFAULT FALSE,
     
     anonymous_link_token VARCHAR(100) UNIQUE NOT NULL,
     anonymous_link_enabled BOOLEAN DEFAULT TRUE,
