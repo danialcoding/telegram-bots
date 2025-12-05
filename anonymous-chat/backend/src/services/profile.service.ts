@@ -64,11 +64,14 @@ class ProfileService {
     let exists = true;
 
     while (exists) {
-      customId =
-        "USER" +
-        Math.floor(Math.random() * 1000000)
-          .toString()
-          .padStart(6, "0");
+      // تولید ID به شکل ID_XXXXXX (6 کاراکتر ترکیبی از حروف و اعداد)
+      const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+      let randomPart = '';
+      for (let i = 0; i < 6; i++) {
+        randomPart += chars.charAt(Math.floor(Math.random() * chars.length));
+      }
+      customId = `ID_${randomPart}`;
+      
       const result = await pool.query(
         "SELECT 1 FROM profiles WHERE custom_id = $1",
         [customId]
@@ -206,6 +209,7 @@ class ProfileService {
   async updateProfile(
     userId: number,
     data: {
+      display_name?: string;
       gender?: "male" | "female";
       age?: number;
       province?: number;
@@ -220,17 +224,19 @@ class ProfileService {
         const queryText = `
         UPDATE profiles
         SET
-          gender = COALESCE($2, gender),
-          age = COALESCE($3, age),
-          province = COALESCE($4, province),
-          city = COALESCE($5, city),
-          bio = COALESCE($6, bio),
+          display_name = COALESCE($2, display_name),
+          gender = COALESCE($3, gender),
+          age = COALESCE($4, age),
+          province = COALESCE($5, province),
+          city = COALESCE($6, city),
+          bio = COALESCE($7, bio),
           updated_at = CURRENT_TIMESTAMP
         WHERE user_id = $1
       `;
 
         await pool.query(queryText, [
           userId,
+          data.display_name,
           data.gender,
           data.age,
           data.province,
@@ -242,7 +248,7 @@ class ProfileService {
           "SELECT first_name FROM users WHERE id = $1",
           [userId]
         );
-        const displayName = user.rows[0]?.first_name || "کاربر";
+        const displayName = data.display_name || user.rows[0]?.first_name || "کاربر";
 
         const customId = await this.generateUniqueCustomId();
         const anonymousToken = await this.generateAnonymousToken();
@@ -319,11 +325,26 @@ class ProfileService {
    */
   async updateOnlineStatus(userId: number, isOnline: boolean): Promise<void> {
     await pool.query(
-      `UPDATE profiles 
-       SET is_online = $1, last_seen = NOW(), updated_at = NOW()
-       WHERE user_id = $2`,
+      `UPDATE users 
+       SET is_online = $1, last_activity = NOW(), updated_at = NOW()
+       WHERE id = $2`,
       [isOnline, userId]
     );
+  }
+
+  /**
+   * بررسی اینکه آیا کاربر چت فعال دارد
+   */
+  async hasActiveChat(userId: number): Promise<boolean> {
+    const result = await pool.query(
+      `SELECT EXISTS(
+        SELECT 1 FROM chats 
+        WHERE (user1_id = $1 OR user2_id = $1) 
+        AND status = 'active'
+      ) as has_chat`,
+      [userId]
+    );
+    return result.rows[0]?.has_chat || false;
   }
 
   /**
@@ -511,7 +532,14 @@ class ProfileService {
         u.is_blocked,
         u.block_reason,
         u.blocked_at,
-        u.unblock_fine
+        u.unblock_fine,
+        u.is_online,
+        u.last_activity as last_seen,
+        EXISTS(
+          SELECT 1 FROM chats 
+          WHERE (user1_id = u.id OR user2_id = u.id) 
+          AND status = 'active'
+        ) as has_active_chat
       FROM profiles p
       LEFT JOIN users u ON p.user_id = u.id
       WHERE p.user_id = $1`,
@@ -544,6 +572,7 @@ class ProfileService {
         p.photo_file_id,
         p.rating,
         p.total_chats,
+        p.show_likes,
         p.created_at,
         p.updated_at,
         CASE 
@@ -608,6 +637,9 @@ class ProfileService {
       result.rows[0].has_block_relation =
         result.rows[0].viewer_blocked_target ||
         result.rows[0].target_blocked_viewer;
+      
+      // لاگ برای دیباگ
+      logger.info(`Public profile for user ${result.rows[0].user_id}: photo_file_id = ${result.rows[0].photo_file_id}`);
     }
 
     return result.rows[0] || null;

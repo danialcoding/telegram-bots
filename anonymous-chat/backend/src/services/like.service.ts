@@ -75,9 +75,11 @@ export class LikeService {
   }
 
   /**
-   * دریافت لیست کسانی که پروفایل رو لایک کردن
+   * دریافت لیست کسانی که پروفایل رو لایک کردن با pagination
    */
-  async getProfileLikers(profileId: number, limit: number = 50) {
+  async getProfileLikers(profileId: number, page: number = 1, limit: number = 10) {
+    const offset = (page - 1) * limit;
+    
     const query = `
       SELECT 
         l.id,
@@ -87,18 +89,41 @@ export class LikeService {
         p.display_name,
         p.gender,
         p.age,
+        p.province,
+        p.city,
         p.photo_file_id,
-        u.is_online
+        p.likes_count,
+        u.is_online,
+        u.last_activity,
+        u.first_name,
+        EXISTS(
+          SELECT 1 FROM chats 
+          WHERE (user1_id = u.id OR user2_id = u.id) 
+          AND status = 'active'
+        ) as has_active_chat
       FROM likes l
-      JOIN profiles p ON l.liker_id = p.user_id
+      JOIN profiles p ON l.liker_id = p.id
       JOIN users u ON p.user_id = u.id
       WHERE l.liked_profile_id = $1
       ORDER BY l.created_at DESC
-      LIMIT $2
+      LIMIT $2 OFFSET $3
     `;
 
-    const result = await pool.query(query, [profileId, limit]);
-    return result.rows;
+    const result = await pool.query(query, [profileId, limit, offset]);
+    
+    // شمارش کل لایکر‌ها
+    const countQuery = 'SELECT COUNT(*) FROM likes WHERE liked_profile_id = $1';
+    const countResult = await pool.query(countQuery, [profileId]);
+    const totalCount = parseInt(countResult.rows[0].count);
+    
+    return {
+      likers: result.rows,
+      totalCount,
+      currentPage: page,
+      totalPages: Math.ceil(totalCount / limit),
+      hasNext: page < Math.ceil(totalCount / limit),
+      hasPrev: page > 1,
+    };
   }
 
   /**

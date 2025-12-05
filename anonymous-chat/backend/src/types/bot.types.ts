@@ -19,6 +19,12 @@ export interface SessionData {
   
   awaitingPhoto?: boolean;
   
+  // Direct Message
+  awaitingDirectMessage?: {
+    targetUserId: number;
+    targetName: string;
+  };
+  
   // Chat Data
   chatData?: {
     currentChatId?: number;
@@ -45,7 +51,10 @@ export interface UserState {
   last_name?: string | null;
   is_blocked?: boolean;
   block_reason?: string | null;
+  referral_code?: string;
   referral_count?: number;
+  successful_referrals?: number;
+  referred_by?: number | null;
   created_at?: Date;
 }
 

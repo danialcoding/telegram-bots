@@ -6,7 +6,7 @@ if (!process.env.BOT_TOKEN) {
 
 export const config = {
   env: process.env.NODE_ENV || 'development',
-  port: parseInt(process.env.PORT || '3000'),
+  port: parseInt(process.env.PORT || '4000'),
   
   bot: {
     token: process.env.BOT_TOKEN!,
@@ -37,8 +37,8 @@ export const config = {
   },
   
   api: {
-    port: parseInt(process.env.API_PORT || '3000'),
-    baseUrl: process.env.API_BASE_URL || 'http://localhost:3000',
+    port: parseInt(process.env.API_PORT || '4000'),
+    baseUrl: process.env.API_BASE_URL || 'http://localhost:4000',
     corsOrigin: process.env.CORS_ORIGIN || '*',
   },
   

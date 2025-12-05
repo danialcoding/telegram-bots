@@ -214,7 +214,7 @@ class AnonymousService {
     return {
       totalReceived: parseInt(result.rows[0].total_received) || 0,
       totalUnread: parseInt(result.rows[0].total_unread) || 0,
-      totalBlocked: parseInt(result.rows].total_blocked) || 0
+      totalBlocked: parseInt(result.rows[0].total_blocked) || 0
     };
   }
 }

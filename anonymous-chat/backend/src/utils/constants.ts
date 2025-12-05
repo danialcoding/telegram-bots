@@ -9,6 +9,7 @@ export const COIN_COSTS = {
 export const COIN_REWARDS = {
   REFERRAL: 10,
   FEMALE_30_MESSAGES_WITH_MALE: 1,
+  SIGNUP: 10,
 };
 
 export const UNBLOCK_FINE_COINS = 50;

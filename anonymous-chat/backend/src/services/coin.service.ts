@@ -1,6 +1,8 @@
 // src/services/coin.service.ts
 import { pool } from '../database/db';
 import { CustomError } from '../utils/errors';
+import { COIN_REWARDS as REWARDS_CONFIG } from '../utils/constants';
+import logger from '../utils/logger';
 
 // ==================== TYPES ====================
 
@@ -23,11 +25,12 @@ interface CoinBalance {
   updated_at: Date;
 }
 
-// ==================== COIN REWARDS از .env ====================
+// ==================== COIN REWARDS از .env با fallback به constants ====================
 
 const COIN_REWARDS = {
-  REFERRAL: parseInt(process.env.COIN_REFERRAL_REWARD || '10'),
-  FEMALE_30_MESSAGES_WITH_MALE: parseInt(process.env.COIN_FEMALE_MESSAGE_REWARD || '1')
+  REFERRAL: parseInt(process.env.COIN_REFERRAL_REWARD || String(REWARDS_CONFIG.REFERRAL)),
+  FEMALE_30_MESSAGES_WITH_MALE: parseInt(process.env.COIN_FEMALE_MESSAGE_REWARD || String(REWARDS_CONFIG.FEMALE_30_MESSAGES_WITH_MALE)),
+  SIGNUP: parseInt(process.env.COIN_SIGNUP_REWARD || String(REWARDS_CONFIG.SIGNUP))
 };
 
 const UNBLOCK_FINE_COINS = parseInt(process.env.UNBLOCK_FINE_COINS || '50');
@@ -171,12 +174,13 @@ export const deductCoins = async (
 };
 
 /**
- * پاداش رفرال
+ * پاداش برای referral - به هر دو طرف
  */
 export const rewardReferral = async (
   referrerId: number,
   referredUserId: number
 ): Promise<void> => {
+  // پاداش به معرف (referrer)
   await addCoins(
     referrerId,
     COIN_REWARDS.REFERRAL,
@@ -184,6 +188,34 @@ export const rewardReferral = async (
     'پاداش معرفی کاربر جدید',
     referredUserId
   );
+  
+  // پاداش به کاربر جدید (referred)
+  await addCoins(
+    referredUserId,
+    COIN_REWARDS.REFERRAL,
+    'referral_bonus',
+    'پاداش ثبت نام از طریق دعوت',
+    referrerId
+  );
+
+  logger.info(`✅ Referral reward: ${COIN_REWARDS.REFERRAL} coins to both ${referrerId} and ${referredUserId}`);
+};
+
+/**
+ * پاداش ثبت نام - 10 سکه برای کاربر جدید
+ */
+export const rewardSignup = async (
+  userId: number
+): Promise<void> => {
+  await addCoins(
+    userId,
+    COIN_REWARDS.SIGNUP,
+    'reward',
+    'پاداش تکمیل پروفایل',
+    null
+  );
+
+  logger.info(`✅ Signup reward: ${COIN_REWARDS.SIGNUP} coins to user ${userId}`);
 };
 
 /**

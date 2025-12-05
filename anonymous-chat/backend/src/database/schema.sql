@@ -15,8 +15,14 @@ CREATE TYPE gender_type AS ENUM ('male', 'female');
 CREATE TYPE chat_status AS ENUM ('active', 'ended', 'reported');
 CREATE TYPE message_type AS ENUM ('text', 'photo', 'video', 'voice', 'sticker');
 CREATE TYPE coin_transaction_type AS ENUM (
-    'initial_bonus',
+    'earn',
+    'spend',
+    'purchase',
+    'referral',
     'referral_bonus',
+    'reward',
+    'fine',
+    'initial_bonus',
     'referral_reward',
     'chat_reward',
     'gender_chat_cost',
@@ -52,6 +58,7 @@ CREATE TABLE users (
     referred_by INTEGER,
     referral_code VARCHAR(20) UNIQUE NOT NULL,
     referral_count INTEGER DEFAULT 0,
+    successful_referrals INTEGER DEFAULT 0,
     
     is_blocked BOOLEAN DEFAULT FALSE,      -- تغییر از is_banned
     block_reason TEXT,                     -- تغییر از ban_reason
@@ -120,6 +127,7 @@ CREATE TABLE coins (
     balance INTEGER DEFAULT 0 NOT NULL,
     total_earned INTEGER DEFAULT 0,
     total_spent INTEGER DEFAULT 0,
+    total_purchased INTEGER DEFAULT 0,
     
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW(),
@@ -242,13 +250,14 @@ CREATE TABLE coin_transactions (
     amount INTEGER NOT NULL,
     type coin_transaction_type NOT NULL,
     description TEXT,
+    reference_id INTEGER,
     
     related_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
     related_chat_id INTEGER REFERENCES chats(id) ON DELETE SET NULL,
     related_direct_id INTEGER REFERENCES directs(id) ON DELETE SET NULL,
     
-    balance_before INTEGER NOT NULL,
-    balance_after INTEGER NOT NULL,
+    balance_before INTEGER DEFAULT 0,
+    balance_after INTEGER DEFAULT 0,
     
     created_at TIMESTAMP DEFAULT NOW(),
     
@@ -290,17 +299,41 @@ CREATE TABLE blocks (
 
 -- -------------------- LIKES (Profile Likes) --------------------
 
+-- CREATE TABLE likes (
+--     id SERIAL PRIMARY KEY,
+--     liker_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+--     liked_profile_id INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+    
+--     created_at TIMESTAMP DEFAULT NOW(),
+    
+--     CONSTRAINT likes_users_different CHECK (
+--         liker_id != (SELECT user_id FROM profiles WHERE id = liked_profile_id)
+--     ),
+--     CONSTRAINT likes_unique_pair UNIQUE (liker_id, liked_profile_id)
+-- );
+
 CREATE TABLE likes (
     id SERIAL PRIMARY KEY,
     liker_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     liked_profile_id INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
-    
+
     created_at TIMESTAMP DEFAULT NOW(),
-    
-    CONSTRAINT likes_users_different CHECK (
-        liker_id != (SELECT user_id FROM profiles WHERE id = liked_profile_id)
-    ),
+
     CONSTRAINT likes_unique_pair UNIQUE (liker_id, liked_profile_id)
+);
+
+
+-- -------------------- DIRECT MESSAGES --------------------
+
+CREATE TABLE direct_messages (
+    id SERIAL PRIMARY KEY,
+    sender_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    receiver_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    message TEXT NOT NULL,
+    is_read BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    
+    CONSTRAINT different_users CHECK (sender_id != receiver_id)
 );
 
 
@@ -480,6 +513,10 @@ CREATE INDEX idx_contacts_is_favorite ON contacts(is_favorite);
 
 CREATE INDEX idx_blocks_blocker_id ON blocks(blocker_id);
 CREATE INDEX idx_blocks_blocked_id ON blocks(blocked_id);
+
+CREATE INDEX idx_direct_messages_receiver ON direct_messages(receiver_id, is_read);
+CREATE INDEX idx_direct_messages_sender ON direct_messages(sender_id);
+CREATE INDEX idx_direct_messages_created ON direct_messages(created_at DESC);
 
 CREATE INDEX idx_likes_liker_id ON likes(liker_id);
 CREATE INDEX idx_likes_liked_profile_id ON likes(liked_profile_id);

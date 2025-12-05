@@ -284,9 +284,10 @@ export class UserService {
   async findByTelegramId(telegramId: number): Promise<User | null> {
     const result = await pool.query(
       `SELECT 
-      id, telegram_id, username, first_name,
-      is_blocked, block_reason, blocked_at,  -- ✅ اصلاح شد
-      referral_count, referred_by, created_at, updated_at
+      id, telegram_id, username, first_name, last_name,
+      is_blocked, block_reason, blocked_at,
+      referral_code, referral_count, successful_referrals, referred_by, 
+      created_at, updated_at
     FROM users 
     WHERE telegram_id = $1`,
       [telegramId]

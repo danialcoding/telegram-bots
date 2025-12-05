@@ -89,28 +89,57 @@ class BlockService {
   }
 
   /**
-   * دریافت لیست افراد بلاک شده توسط کاربر
+   * دریافت لیست افراد بلاک شده توسط کاربر با pagination
    */
-  async getBlockedUsers(userId: number): Promise<any[]> {
+  async getBlockedUsers(userId: number, page: number = 1, limit: number = 10): Promise<any> {
+    const offset = (page - 1) * limit;
+    
     const result = await pool.query(
       `SELECT 
         u.id,
         u.telegram_id,
         u.first_name,
         u.username,
+        u.is_online,
+        u.last_activity,
         p.custom_id,
         p.display_name,
+        p.gender,
+        p.age,
+        p.province,
+        p.city,
         p.photo_file_id,
-        b.created_at as blocked_at
+        p.likes_count,
+        b.created_at as blocked_at,
+        EXISTS(
+          SELECT 1 FROM chats 
+          WHERE (user1_id = u.id OR user2_id = u.id) 
+          AND status = 'active'
+        ) as has_active_chat
       FROM blocks b
       JOIN users u ON b.blocked_id = u.id
       LEFT JOIN profiles p ON u.id = p.user_id
       WHERE b.blocker_id = $1
-      ORDER BY b.created_at DESC`,
+      ORDER BY b.created_at DESC
+      LIMIT $2 OFFSET $3`,
+      [userId, limit, offset]
+    );
+    
+    // شمارش کل بلاک‌ها
+    const countResult = await pool.query(
+      'SELECT COUNT(*) FROM blocks WHERE blocker_id = $1',
       [userId]
     );
-
-    return result.rows;
+    const totalCount = parseInt(countResult.rows[0].count);
+    
+    return {
+      blockedUsers: result.rows,
+      totalCount,
+      currentPage: page,
+      totalPages: Math.ceil(totalCount / limit),
+      hasNext: page < Math.ceil(totalCount / limit),
+      hasPrev: page > 1,
+    };
   }
 
   /**

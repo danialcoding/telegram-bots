@@ -25,6 +25,7 @@ export const profileKeyboards = {
         Markup.button.callback("👥 لیست مخاطبین", "show_contacts"),
         Markup.button.callback("🚫 بلاک شده‌ها", "show_blocked_users"),
       ],
+      [Markup.button.callback("📬 پیام‌های دایرکت", "view_direct_messages")],
       [Markup.button.callback("🔙 بازگشت به منو", "main_menu")],
     ]),
 
@@ -107,7 +108,7 @@ export const profileKeyboards = {
     ]),
 
   /**
-   * ✅ کیبورد نمایش پروفایل عمومی
+   * ✅ کیبورد نمایش پروفایل عمومی (بهبود یافته)
    */
   publicProfile: (
     targetUserId: number,
@@ -115,48 +116,84 @@ export const profileKeyboards = {
       isLiked: boolean;
       isInContacts: boolean;
       hasChatHistory: boolean;
+      likesCount: number;
+      showLikes: boolean;
     }
-  ) =>
-    Markup.inlineKeyboard([
-      [
+  ) => {
+    const buttons = [];
+
+    // ردیف اول: لایک (فقط اگر فعال باشد) + تعداد لایک‌ها
+    if (options.showLikes) {
+      buttons.push([
         Markup.button.callback(
-          options.isLiked ? "💔 آن‌لایک" : "❤️ لایک",
+          options.isLiked 
+            ? `💔 برداشتن لایک (${options.likesCount})` 
+            : `❤️ لایک کردن (${options.likesCount})`,
           `like_toggle_${targetUserId}`
         ),
-      ],
+      ]);
+    }
+
+    // ردیف دوم: درخواست چت + پیام دایرکت
+    buttons.push([
+      Markup.button.callback("💬 درخواست چت", `request_chat_${targetUserId}`),
+      Markup.button.callback("✉️ پیام دایرکت", `send_direct_${targetUserId}`),
+    ]);
+
+    // ردیف سوم: افزودن به مخاطبین
+    buttons.push([
+      Markup.button.callback(
+        options.isInContacts ? "➖ حذف از مخاطبین" : "➕ افزودن به مخاطبین",
+        `contact_toggle_${targetUserId}`
+      ),
+    ]);
+
+    // ردیف چهارم: گزارش + بلاک
+    buttons.push([
+      Markup.button.callback("🚨 گزارش", `report_user_${targetUserId}`),
+      Markup.button.callback("🚫 بلاک", `block_user_${targetUserId}`),
+    ]);
+
+    // ردیف آخر: بازگشت
+    buttons.push([Markup.button.callback("🔙 بازگشت", "main_menu")]);
+
+    return Markup.inlineKeyboard(buttons);
+  },
+
+  /**
+   * ✅ کیبورد درخواست چت (برای گیرنده)
+   */
+  chatRequest: (senderId: number, senderCustomId: string) =>
+    Markup.inlineKeyboard([
       [
-        Markup.button.callback("💬 درخواست چت", `start_chat_${targetUserId}`),
-        Markup.button.callback("✉️ پیام دایرکت", `send_direct_${targetUserId}`),
+        Markup.button.callback("✅ قبول", `accept_chat_${senderId}`),
+        Markup.button.callback("❌ رد", `reject_chat_${senderId}`),
       ],
-      [
-        Markup.button.callback("🚨 گزارش", `report_user_${targetUserId}`),
-        Markup.button.callback("🚫 بلاک", `block_user_${targetUserId}`),
-      ],
-      [
-        Markup.button.callback(
-          options.isInContacts ? "➖ حذف از مخاطبین" : "➕ افزودن به مخاطبین",
-          `contact_toggle_${targetUserId}`
-        ),
-      ],
-      ...(options.hasChatHistory
-        ? [
-            [
-              Markup.button.callback(
-                "🔔 اطلاع پایان چت",
-                `notify_end_${targetUserId}`
-              ),
-            ],
-          ]
-        : []),
-      [Markup.button.callback("🔙 بازگشت", "main_menu")],
+      [Markup.button.callback("👤 مشاهده پروفایل", `view_user_${senderId}`)],
     ]),
 
   /**
    * ✅ کیبورد پروفایل - وقتی خودم طرف مقابل را بلاک کرده‌ام
    */
-  profileBlockedByMe: (targetUserId: number) =>
-    Markup.inlineKeyboard([
-      [Markup.button.callback("❤️ لایک", `like_toggle_${targetUserId}`)],
+  profileBlockedByMe: (
+    targetUserId: number,
+    options?: { isLiked?: boolean; likesCount?: number; showLikes?: boolean }
+  ) => {
+    const buttons = [];
+
+    // دکمه لایک (اگر فعال باشد)
+    if (options?.showLikes) {
+      buttons.push([
+        Markup.button.callback(
+          options.isLiked
+            ? `💔 برداشتن لایک (${options.likesCount || 0})`
+            : `❤️ لایک کردن (${options.likesCount || 0})`,
+          `like_toggle_${targetUserId}`
+        ),
+      ]);
+    }
+
+    buttons.push(
       [
         Markup.button.callback(
           "🔓 آنبلاک کردن",
@@ -169,8 +206,11 @@ export const profileKeyboards = {
           "blocked_by_me_info"
         ),
       ],
-      [Markup.button.callback("🔙 بازگشت", "main_menu")],
-    ]),
+      [Markup.button.callback("🔙 بازگشت", "main_menu")]
+    );
+
+    return Markup.inlineKeyboard(buttons);
+  },
 
   /**
    * ✅ کیبورد پروفایل - وقتی طرف مقابل من را بلاک کرده
