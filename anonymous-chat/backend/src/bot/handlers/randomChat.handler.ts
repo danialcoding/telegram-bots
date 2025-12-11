@@ -118,15 +118,8 @@ class RandomChatHandlers {
 
       if (match) {
         // پیدا شدن match - ایجاد چت
+        // showFoundUser خودش به هر دو کاربر پیام می‌فرستد
         await this.showFoundUser(ctx, match, searchMsg.message_id);
-        
-        // اطلاع به کاربر مقابل که در صف بود
-        if (this.bot) {
-          const matchUserData = await userService.findByIdWithProfile(match.user_id);
-          if (matchUserData) {
-            await this.notifyMatchFound(match.user_id, user, matchUserData.telegram_id);
-          }
-        }
       } else {
         // عدم وجود match - باقی ماندن در صف
         logger.info(`✅ User ${user.id} added to queue, waiting for match`);
@@ -193,15 +186,8 @@ class RandomChatHandlers {
 
       if (match) {
         // پیدا شدن match - ایجاد چت
+        // showFoundUser خودش به هر دو کاربر پیام می‌فرستد
         await this.showFoundUser(ctx, match, searchMsg.message_id);
-        
-        // اطلاع به کاربر مقابل که در صف بود
-        if (this.bot) {
-          const matchUserData = await userService.findByIdWithProfile(match.user_id);
-          if (matchUserData) {
-            await this.notifyMatchFound(match.user_id, user, matchUserData.telegram_id);
-          }
-        }
       } else {
         // عدم وجود match - باقی ماندن در صف
         logger.info(`✅ User ${user.id} added to queue for ${gender}, waiting for match`);

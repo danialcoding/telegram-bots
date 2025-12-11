@@ -8,7 +8,7 @@ import { getBalance, deductCoins, hasEnoughCoins, rewardReferral, rewardSignup }
 import { coinHandler } from "./coin.handler";
 import { COIN_REWARDS } from "../../utils/constants";
 import logger from "../../utils/logger";
-import { getLastSeenText, isUserOnline } from "../../utils/helpers";
+import { getLastSeenText, isUserOnline, parseIntPersian } from "../../utils/helpers";
 import { profileKeyboards } from "../keyboards/profile.keyboard";
 import { mainMenuKeyboard } from "../keyboards/main.keyboard";
 import { MyContext } from "../../types/bot.types";
@@ -1755,7 +1755,7 @@ class ProfileHandlers {
 
       // ==================== ویرایش سن ====================
       if (step === "age") {
-        const age = parseInt(text);
+        const age = parseIntPersian(text);
 
         // اعتبارسنجی سن
         if (isNaN(age)) {

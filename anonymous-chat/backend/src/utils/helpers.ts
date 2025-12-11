@@ -111,3 +111,30 @@ function calculateTimeDiff(timestamp: Date | string | null): number | null {
 
   return Date.now() - date.getTime();
 }
+
+/**
+ * تبدیل اعداد فارسی/عربی به انگلیسی
+ * مثال: "۱۲۳" -> "123"
+ */
+export function convertPersianToEnglishNumbers(str: string): string {
+  if (!str) return str;
+  
+  const persianNumbers = ['۰', '۱', '۲', '۳', '۴', '۵', '۶', '۷', '۸', '۹'];
+  const arabicNumbers = ['٠', '١', '٢', '٣', '٤', '٥', '٦', '٧', '٨', '٩'];
+  
+  let result = str;
+  
+  for (let i = 0; i < 10; i++) {
+    result = result.replace(new RegExp(persianNumbers[i], 'g'), String(i));
+    result = result.replace(new RegExp(arabicNumbers[i], 'g'), String(i));
+  }
+  
+  return result;
+}
+
+/**
+ * Parse عدد با پشتیبانی از اعداد فارسی/عربی
+ */
+export function parseIntPersian(str: string): number {
+  return parseInt(convertPersianToEnglishNumbers(str), 10);
+}

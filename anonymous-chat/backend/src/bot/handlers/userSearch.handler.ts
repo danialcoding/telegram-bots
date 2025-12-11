@@ -3,7 +3,7 @@ import { userSearchService } from "../../services/userSearch.service";
 import { userSearchMenuKeyboard, backToSearchMenuKeyboard, genderSelectionKeyboard, userListKeyboard } from "../keyboards/userSearch.keyboard";
 import { mainMenuKeyboard } from "../keyboards/main.keyboard";
 import logger from "../../utils/logger";
-import { isUserOnline } from "../../utils/helpers";
+import { isUserOnline, convertPersianToEnglishNumbers } from "../../utils/helpers";
 import { Markup } from "telegraf";
 import { generateSearchCode, formatUserDisplay, getSearchTitle, formatSearchDateTime } from "../helpers/userList.helper";
 
@@ -254,8 +254,10 @@ class UserSearchHandlers {
           }
         }
         // چک کردن آیا عدد است (Telegram ID) - اولویت دوم
-        else if (/^\d+$/.test(text)) {
-          targetTelegramId = parseInt(text);
+        // ابتدا اعداد فارسی/عربی را به انگلیسی تبدیل می‌کنیم
+        const normalizedText = convertPersianToEnglishNumbers(text);
+        if (/^\d+$/.test(normalizedText)) {
+          targetTelegramId = parseInt(normalizedText);
           logger.info(`Telegram ID entered: ${targetTelegramId}`);
         }
         // چک کردن آیا username تلگرام است (با یا بدون @) - اولویت سوم
