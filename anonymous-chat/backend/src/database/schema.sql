@@ -68,6 +68,8 @@ CREATE TABLE users (
     is_silent BOOLEAN DEFAULT FALSE,              -- ✅ اضافه شد
     silent_until TIMESTAMP,  
     
+    last_ended_chat_id INTEGER,                   -- ✅ آخرین چت پایان‌یافته برای دستور /delete
+    
     is_online BOOLEAN DEFAULT FALSE,
     last_activity TIMESTAMP DEFAULT NOW(),
     
@@ -96,6 +98,9 @@ CREATE TABLE profiles (
     
     province INTEGER NOT NULL,           -- ✅ تغییر به INTEGER
     city INTEGER NOT NULL,               -- ✅ تغییر به INTEGER
+    
+    latitude DECIMAL(10, 8),             -- ✅ موقعیت جغرافیایی (عرض جغرافیایی)
+    longitude DECIMAL(11, 8),            -- ✅ موقعیت جغرافیایی (طول جغرافیایی)
     
     photo_file_id TEXT,                  -- ✅ اضافه شد
     likes_count INTEGER DEFAULT 0,       -- ✅ اضافه شد
@@ -240,6 +245,58 @@ CREATE TABLE directs (
         (type = 'text' AND content IS NOT NULL) OR
         (type != 'text' AND file_id IS NOT NULL)
     )
+);
+
+-- -------------------- RANDOM CHATS --------------------
+
+-- جدول صف انتظار برای جستجوی چت تصادفی
+CREATE TABLE random_chat_queue (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    search_type VARCHAR(20) NOT NULL CHECK (search_type IN ('any', 'male', 'female')),
+    created_at TIMESTAMP DEFAULT NOW(),
+    
+    CONSTRAINT unique_user_in_queue UNIQUE (user_id)
+);
+
+CREATE TABLE random_chats (
+    id SERIAL PRIMARY KEY,
+    user1_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user2_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    
+    status VARCHAR(20) DEFAULT 'active' CHECK (status IN ('active', 'ended')),
+    safe_mode_user1 BOOLEAN DEFAULT FALSE,
+    safe_mode_user2 BOOLEAN DEFAULT FALSE,
+    
+    started_at TIMESTAMP DEFAULT NOW(),
+    ended_at TIMESTAMP,
+    ended_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW(),
+    
+    CONSTRAINT random_chats_users_different CHECK (user1_id != user2_id)
+);
+
+-- Add FK to users.last_ended_chat_id AFTER random_chats creation
+ALTER TABLE users ADD CONSTRAINT fk_users_last_ended_chat_id 
+    FOREIGN KEY (last_ended_chat_id) REFERENCES random_chats(id) ON DELETE SET NULL;
+
+-- -------------------- RANDOM CHAT MESSAGES --------------------
+
+CREATE TABLE random_chat_messages (
+    id SERIAL PRIMARY KEY,
+    chat_id INTEGER NOT NULL REFERENCES random_chats(id) ON DELETE CASCADE,
+    sender_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    
+    message_type VARCHAR(20) NOT NULL CHECK (message_type IN ('text', 'photo', 'video', 'voice', 'document', 'sticker')),
+    message_text TEXT,
+    file_id VARCHAR(255),
+    
+    telegram_message_id_user1 INTEGER,
+    telegram_message_id_user2 INTEGER,
+    
+    created_at TIMESTAMP DEFAULT NOW()
 );
 
 -- -------------------- COIN TRANSACTIONS (After chats/directs) --------------------
@@ -456,6 +513,20 @@ CREATE TABLE system_settings (
     updated_at TIMESTAMP DEFAULT NOW()
 );
 
+-- -------------------- SEARCH RESULTS --------------------
+
+CREATE TABLE search_results (
+    id SERIAL PRIMARY KEY,
+    search_code VARCHAR(50) UNIQUE NOT NULL,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    search_type VARCHAR(50) NOT NULL,
+    gender VARCHAR(10),
+    user_ids INTEGER[] NOT NULL,
+    total_count INTEGER NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    expires_at TIMESTAMP DEFAULT (CURRENT_TIMESTAMP + INTERVAL '1 hour')
+);
+
 -- ==================== INDEXES ====================
 -- (کپی دقیق همون‌ها - بدون تغییر)
 
@@ -464,6 +535,7 @@ CREATE INDEX idx_users_referral_code ON users(referral_code);
 CREATE INDEX idx_users_is_blocked ON users(is_blocked);  -- ✅ تغییر
 CREATE INDEX idx_users_is_online ON users(is_online);
 CREATE INDEX idx_users_created_at ON users(created_at);
+CREATE INDEX idx_users_last_ended_chat_id ON users(last_ended_chat_id);  -- ✅ برای دستور /delete
 
 CREATE INDEX idx_profiles_user_id ON profiles(user_id);
 CREATE INDEX idx_profiles_custom_id ON profiles(custom_id);
@@ -492,6 +564,20 @@ CREATE INDEX idx_chats_status ON chats(status);
 CREATE INDEX idx_chats_started_at ON chats(started_at);
 CREATE INDEX idx_chats_users ON chats(user1_id, user2_id);
 CREATE INDEX idx_chats_active_user ON chats(user1_id, status) WHERE status = 'active';
+
+CREATE INDEX idx_random_chat_queue_user_id ON random_chat_queue(user_id);
+CREATE INDEX idx_random_chat_queue_search_type ON random_chat_queue(search_type);
+CREATE INDEX idx_random_chat_queue_created_at ON random_chat_queue(created_at);
+
+CREATE INDEX idx_random_chats_user1_id ON random_chats(user1_id);
+CREATE INDEX idx_random_chats_user2_id ON random_chats(user2_id);
+CREATE INDEX idx_random_chats_status ON random_chats(status);
+CREATE INDEX idx_random_chats_active_user1 ON random_chats(user1_id, status) WHERE status = 'active';
+CREATE INDEX idx_random_chats_active_user2 ON random_chats(user2_id, status) WHERE status = 'active';
+
+CREATE INDEX idx_random_chat_messages_chat_id ON random_chat_messages(chat_id);
+CREATE INDEX idx_random_chat_messages_sender_id ON random_chat_messages(sender_id);
+CREATE INDEX idx_random_chat_messages_created_at ON random_chat_messages(created_at);
 
 CREATE INDEX idx_messages_chat_id ON messages(chat_id);
 CREATE INDEX idx_messages_sender_id ON messages(sender_id);
@@ -526,6 +612,10 @@ CREATE INDEX idx_anonymous_messages_sender_id ON anonymous_messages(sender_id);
 CREATE INDEX idx_anonymous_messages_receiver_id ON anonymous_messages(receiver_id);
 CREATE INDEX idx_anonymous_messages_link_token ON anonymous_messages(link_token);
 CREATE INDEX idx_anonymous_messages_created_at ON anonymous_messages(created_at);
+
+CREATE INDEX idx_search_results_code ON search_results(search_code);
+CREATE INDEX idx_search_results_user ON search_results(user_id);
+CREATE INDEX idx_search_results_expires ON search_results(expires_at);
 
 CREATE INDEX idx_reports_reporter_id ON reports(reporter_id);
 CREATE INDEX idx_reports_reported_id ON reports(reported_id);
@@ -961,5 +1051,15 @@ JOIN users u ON p.user_id = u.id
 WHERE p.likes_count > 0
 ORDER BY p.likes_count DESC, p.rating DESC
 LIMIT 100;
+
+-- ==================== CLEANUP FUNCTIONS ====================
+
+-- حذف خودکار نتایج جستجوی منقضی شده
+CREATE OR REPLACE FUNCTION delete_expired_search_results()
+RETURNS void AS $$
+BEGIN
+  DELETE FROM search_results WHERE expires_at < NOW();
+END;
+$$ LANGUAGE plpgsql;
 
 -- ==================== END ====================

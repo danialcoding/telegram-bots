@@ -1,5 +1,16 @@
-import { Pool } from 'pg';
+import { Pool, types } from 'pg';
 import { config } from '../config';
+
+// Fix timezone issue: PostgreSQL stores timestamps in UTC,
+// but node-postgres by default parses TIMESTAMP WITHOUT TIME ZONE as local time.
+// We need to parse them as UTC.
+
+// Type OID for TIMESTAMP WITHOUT TIME ZONE = 1114
+// Type OID for TIMESTAMPTZ (with timezone) = 1184
+types.setTypeParser(1114, (stringValue: string) => {
+  // Append 'Z' to indicate UTC timezone
+  return new Date(stringValue + 'Z');
+});
 
 export const pool = new Pool({
   host: config.database.host,

@@ -141,6 +141,29 @@ export class UserService {
   }
 
   /**
+   * دریافت اطلاعات کامل کاربر با پروفایل
+   */
+  async findByIdWithProfile(userId: number): Promise<any | null> {
+    try {
+      const result = await pool.query(
+        `SELECT 
+          u.id, u.telegram_id, u.username, u.first_name, u.last_name,
+          p.id as profile_id, p.custom_id, p.display_name, p.gender, p.age, 
+          p.province, p.city, p.bio, p.photo_file_id, p.likes_count
+        FROM users u
+        LEFT JOIN profiles p ON u.id = p.user_id
+        WHERE u.id = $1`,
+        [userId]
+      );
+
+      return result.rows[0] || null;
+    } catch (error) {
+      logger.error('❌ Error finding user with profile:', error);
+      throw error;
+    }
+  }
+
+  /**
    * ✅ متد processReferral جدید
    */
   async processReferral(userId: number, referrerId: number): Promise<boolean> {
@@ -362,7 +385,7 @@ export class UserService {
    */
   async updateLastActivity(userId: number): Promise<void> {
     await query(
-      "UPDATE users SET last_activity = CURRENT_TIMESTAMP WHERE id = $1",
+      "UPDATE users SET last_activity = CURRENT_TIMESTAMP, is_online = TRUE WHERE id = $1",
       [userId]
     );
     await redis.setUserOnline(userId);
@@ -632,6 +655,68 @@ export class UserService {
       reportCount: parseInt(row.report_count) || 0,
     };
   }
+
+  /**
+   * جستجوی کاربر تصادفی (برای چت با ناشناس)
+   */
+  async findRandomUser(currentUserId: number): Promise<any | null> {
+    try {
+      const result = await pool.query(
+        `SELECT 
+          u.id, u.telegram_id, u.first_name, u.last_name, u.username,
+          p.custom_id, p.display_name as name, p.gender, p.age, p.province, p.city
+        FROM users u
+        INNER JOIN profiles p ON u.id = p.user_id
+        WHERE u.id != $1
+          AND u.is_blocked = false
+          AND u.id NOT IN (
+            SELECT blocked_id FROM blocks WHERE blocker_id = $1
+            UNION
+            SELECT blocker_id FROM blocks WHERE blocked_id = $1
+          )
+        ORDER BY RANDOM()
+        LIMIT 1`,
+        [currentUserId]
+      );
+
+      return result.rows[0] || null;
+    } catch (error) {
+      logger.error('❌ Error finding random user:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * جستجوی کاربر تصادفی با جنسیت خاص
+   */
+  async findRandomUserByGender(currentUserId: number, gender: 'male' | 'female'): Promise<any | null> {
+    try {
+      const result = await pool.query(
+        `SELECT 
+          u.id, u.telegram_id, u.first_name, u.last_name, u.username,
+          p.custom_id, p.display_name as name, p.gender, p.age, p.province, p.city
+        FROM users u
+        INNER JOIN profiles p ON u.id = p.user_id
+        WHERE u.id != $1
+          AND u.is_blocked = false
+          AND p.gender = $2
+          AND u.id NOT IN (
+            SELECT blocked_id FROM blocks WHERE blocker_id = $1
+            UNION
+            SELECT blocker_id FROM blocks WHERE blocked_id = $1
+          )
+        ORDER BY RANDOM()
+        LIMIT 1`,
+        [currentUserId, gender]
+      );
+
+      return result.rows[0] || null;
+    } catch (error) {
+      logger.error('❌ Error finding random user by gender:', error);
+      throw error;
+    }
+  }
 }
 
 export const userService = new UserService();
+

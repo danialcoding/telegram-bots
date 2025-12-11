@@ -15,9 +15,12 @@ export interface SessionData {
     province_id?: number;
     city_id?: number;
     bio?: string | null;
+    latitude?: number | null;
+    longitude?: number | null;
   };
   
   awaitingPhoto?: boolean;
+  awaitingLocation?: boolean;
   
   // Direct Message
   awaitingDirectMessage?: {
@@ -38,6 +41,15 @@ export interface SessionData {
     maxAge?: number;
     province?: string;
   };
+  
+  // User Search State
+  searchState?: {
+    type?: 'specific_contact' | 'advanced';
+    filters?: any;
+  };
+  
+  // Last Ended Chat (for delete command)
+  lastEndedChatId?: number;
 }
 
 /**
@@ -56,6 +68,13 @@ export interface UserState {
   successful_referrals?: number;
   referred_by?: number | null;
   created_at?: Date;
+  
+  // Profile fields
+  name?: string | null;
+  gender?: 'male' | 'female' | null;
+  age?: number | null;
+  custom_id?: number;
+  coins?: number;
 }
 
 /**

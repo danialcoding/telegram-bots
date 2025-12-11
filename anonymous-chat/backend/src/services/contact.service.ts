@@ -82,6 +82,8 @@ export class ContactService {
         p.age,
         p.province,
         p.city,
+        p.latitude,
+        p.longitude,
         p.photo_file_id,
         p.likes_count,
         u.is_online,

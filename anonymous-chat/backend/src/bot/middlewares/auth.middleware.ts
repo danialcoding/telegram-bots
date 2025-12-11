@@ -227,7 +227,21 @@ export const authMiddleware = async (ctx: Context, next: () => Promise<void>) =>
     }
 
     // ✅ 5. ذخیره اطلاعات کاربر در context
-    ctx.state.user = user;
+    // دریافت اطلاعات پروفایل برای داشتن gender
+    const userWithProfile = await userService.findByIdWithProfile(user.id);
+    
+    if (userWithProfile) {
+      // ترکیب اطلاعات user با profile
+      ctx.state.user = {
+        ...user,
+        gender: userWithProfile.gender,
+        age: userWithProfile.age,
+        name: userWithProfile.display_name,
+        custom_id: userWithProfile.custom_id,
+      };
+    } else {
+      ctx.state.user = user;
+    }
 
     logger.debug(`✅ User authenticated: ${user.id}`, {
       telegramId,

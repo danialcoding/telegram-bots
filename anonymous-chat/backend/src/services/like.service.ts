@@ -91,6 +91,8 @@ export class LikeService {
         p.age,
         p.province,
         p.city,
+        p.latitude,
+        p.longitude,
         p.photo_file_id,
         p.likes_count,
         u.is_online,
@@ -139,9 +141,15 @@ export class LikeService {
         p.display_name,
         p.gender,
         p.age,
+        p.province,
+        p.city,
+        p.latitude,
+        p.longitude,
         p.photo_file_id,
         p.likes_count,
-        u.is_online
+        u.is_online,
+        u.last_activity,
+        u.first_name
       FROM likes l
       JOIN profiles p ON l.liked_profile_id = p.id
       JOIN users u ON p.user_id = u.id

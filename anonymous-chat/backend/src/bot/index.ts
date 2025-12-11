@@ -5,6 +5,7 @@ import { config } from "../config/index";
 import logger from "../utils/logger";
 import db from "../services/database.service";
 import redisService from "../services/redis.service";
+import { pool } from "../database/db";
 
 // Types
 import { MyContext, SessionData } from "../types/bot.types";
@@ -13,10 +14,17 @@ import { MyContext, SessionData } from "../types/bot.types";
 import { startHandler } from "./handlers/start.handler";
 import { profileHandlers } from "./handlers/profile.handler";
 import { coinHandler } from "./handlers/coin.handler";
+import randomChatHandler from "./handlers/randomChat.handler";
+import { userSearchHandlers } from "./handlers/userSearch.handler";
+import { randomChatService } from "../services/randomChat.service";
 
 // Middlewares
 import { authMiddleware } from "./middlewares/auth.middleware";
 import { rateLimitMiddleware } from "./middlewares/rate-limit.middleware";
+import { requireCompleteProfile } from "./middlewares/profile-check.middleware";
+
+// Keyboards
+import { mainMenuKeyboard } from "./keyboards/main.keyboard";
 
 class TelegramBot {
   public bot: Telegraf<MyContext>;
@@ -26,6 +34,9 @@ class TelegramBot {
     this.setupMiddlewares();
     this.setupHandlers();
     this.setupErrorHandling();
+    
+    // تنظیم bot instance برای randomChatHandler
+    randomChatHandler.setBot(this.bot);
   }
 
   private setupMiddlewares(): void {
@@ -46,6 +57,18 @@ class TelegramBot {
     // 🎯 COMMANDS
     // ===================================
     this.bot.command("start", startHandler);
+    
+    // دستور پاک کردن پیام‌های چت مشخص: /delete_CHAT_ID
+    this.bot.hears(/^\/delete_(\d+)$/, async (ctx) => {
+      const chatId = parseInt(ctx.match[1]);
+      
+      if (!chatId || isNaN(chatId)) {
+        return await ctx.reply('⚠️ شناسه چت نامعتبر است.');
+      }
+      
+      await randomChatHandler.deleteChatMessages(ctx, chatId);
+      return;
+    });
 
     // ===================================
     // 🔘 MAIN KEYBOARD BUTTONS
@@ -55,24 +78,108 @@ class TelegramBot {
       return profileHandlers.showProfileMenu(ctx);
     });
 
-    this.bot.hears("🔍 جستجو", async (ctx) => {
-      await ctx.reply("🔍 بخش جستجو به زودی فعال می‌شود...");
+    this.bot.hears("💬 چت با ناشناس", requireCompleteProfile, async (ctx) => {
+      return randomChatHandler.showRandomChatMenu(ctx);
     });
 
-    this.bot.hears("💰 سکه‌ها", async (ctx) => {
+    this.bot.hears("💰 سکه‌ها", requireCompleteProfile, async (ctx) => {
       return coinHandler.showCoinsPage(ctx);
     });
 
-    this.bot.hears("🎁 دعوت دوستان", async (ctx) => {
+    this.bot.hears("🎁 دعوت دوستان", requireCompleteProfile, async (ctx) => {
       return coinHandler.showInvitePage(ctx);
     });
 
-    this.bot.hears("💬 چت‌های من", async (ctx) => {
-      await ctx.reply("💬 بخش چت‌ها به زودی فعال می‌شود...");
+    this.bot.hears("🔍 جستجوی کاربران", requireCompleteProfile, async (ctx) => {
+      return userSearchHandlers.showSearchMenu(ctx);
     });
 
-    this.bot.hears("⚙️ تنظیمات", async (ctx) => {
+    this.bot.hears("⚙️ تنظیمات", requireCompleteProfile, async (ctx) => {
       await ctx.reply("⚙️ بخش تنظیمات به زودی فعال می‌شود...");
+    });
+
+    // ===================================
+    // 🔍 USER SEARCH CALLBACKS
+    // ===================================
+    
+    this.bot.action("search_specific", requireCompleteProfile, async (ctx) => {
+      await ctx.answerCbQuery();
+      return userSearchHandlers.handleSpecificContactSearch(ctx);
+    });
+
+    this.bot.action("search_same_province", requireCompleteProfile, async (ctx) => {
+      await ctx.answerCbQuery();
+      return userSearchHandlers.handleSameProvinceSearch(ctx);
+    });
+
+    this.bot.action("search_same_age", requireCompleteProfile, async (ctx) => {
+      await ctx.answerCbQuery();
+      return userSearchHandlers.handleSameAgeSearch(ctx);
+    });
+
+    this.bot.action("search_advanced", requireCompleteProfile, async (ctx) => {
+      await ctx.answerCbQuery();
+      return userSearchHandlers.handleAdvancedSearch(ctx);
+    });
+
+    this.bot.action("search_new_users", requireCompleteProfile, async (ctx) => {
+      await ctx.answerCbQuery();
+      return userSearchHandlers.handleNewUsersSearch(ctx);
+    });
+
+    this.bot.action("search_no_chats", requireCompleteProfile, async (ctx) => {
+      await ctx.answerCbQuery();
+      return userSearchHandlers.handleNoChatsSearch(ctx);
+    });
+
+    this.bot.action("search_recent_chats", requireCompleteProfile, async (ctx) => {
+      await ctx.answerCbQuery();
+      return userSearchHandlers.handleRecentChatsSearch(ctx);
+    });
+
+    this.bot.action("search_popular", requireCompleteProfile, async (ctx) => {
+      await ctx.answerCbQuery();
+      return userSearchHandlers.handlePopularUsersSearch(ctx);
+    });
+
+    this.bot.action("back_to_search_menu", async (ctx) => {
+      await ctx.answerCbQuery();
+      return userSearchHandlers.backToSearchMenu(ctx);
+    });
+
+    // Gender selection callbacks
+    this.bot.action(/^(search_\w+)_gender_(male|female|all)$/, requireCompleteProfile, async (ctx) => {
+      await ctx.answerCbQuery();
+      const match = ctx.match;
+      const searchType = match[1]; // مثل search_same_province
+      const gender = match[2]; // male, female, all
+      return userSearchHandlers.handleGenderSelection(ctx, searchType, gender);
+    });
+
+    // Page navigation callbacks
+    this.bot.action(/^(search_\w+)_page_(\d+)(?:_(male|female|all))?$/, requireCompleteProfile, async (ctx) => {
+      await ctx.answerCbQuery();
+      const match = ctx.match;
+      const searchType = match[1];
+      const page = parseInt(match[2]);
+      const gender = match[3]; // male, female, all یا undefined
+      return userSearchHandlers.handlePageChange(ctx, searchType, page, gender);
+    });
+
+    // ===================================
+    // 💬 RANDOM CHAT KEYBOARD BUTTONS
+    // ===================================
+    
+    this.bot.hears("👁️ مشاهده پروفایل", async (ctx) => {
+      await randomChatHandler.viewPartnerProfile(ctx);
+    });
+
+    this.bot.hears(/^🔒 فعال‌سازی حالت امن|🔓 غیرفعال‌سازی حالت امن$/, async (ctx) => {
+      await randomChatHandler.toggleSafeMode(ctx);
+    });
+
+    this.bot.hears("❌ اتمام چت", async (ctx) => {
+      await randomChatHandler.requestEndChat(ctx);
     });
 
     // ===================================
@@ -385,6 +492,49 @@ class TelegramBot {
     });
 
     // ===================================
+    // 🎲 RANDOM CHAT ACTIONS
+    // ===================================
+    
+    // بازگشت به منوی چت با ناشناس
+    this.bot.action("random_chat_menu", requireCompleteProfile, async (ctx) => {
+      await ctx.answerCbQuery();
+      try {
+        await ctx.deleteMessage();
+      } catch {}
+      await randomChatHandler.showRandomChatMenu(ctx);
+    });
+
+    // جستجوی شانسی (بدون فیلتر جنسیت)
+    this.bot.action("random_search_any", requireCompleteProfile, async (ctx) => {
+      await randomChatHandler.searchRandom(ctx);
+    });
+
+    // جستجوی پسر
+    this.bot.action("random_search_male", requireCompleteProfile, async (ctx) => {
+      await randomChatHandler.searchByGender(ctx, 'male');
+    });
+
+    // جستجوی دختر
+    this.bot.action("random_search_female", requireCompleteProfile, async (ctx) => {
+      await randomChatHandler.searchByGender(ctx, 'female');
+    });
+
+    // لغو جستجو
+    this.bot.action("cancel_search", requireCompleteProfile, async (ctx) => {
+      await randomChatHandler.cancelSearch(ctx);
+    });
+
+    // تایید اتمام چت
+    this.bot.action("confirm_end_chat", async (ctx) => {
+      await randomChatHandler.confirmEndChat(ctx);
+    });
+
+    // لغو اتمام چت
+    this.bot.action("cancel_end_chat", async (ctx) => {
+      await randomChatHandler.cancelEndChat(ctx);
+    });
+
+    // ===================================
     // 🔙 NAVIGATION ACTIONS
     // ===================================
     
@@ -419,14 +569,32 @@ class TelegramBot {
     });
     
     // ✅ دریافت عکس (فقط برای پروفایل)
-    this.bot.on(message("photo"), (ctx) => {
+    this.bot.on(message("photo"), async (ctx) => {
       if (ctx.session?.awaitingPhoto || ctx.session?.profileEdit) {
         return profileHandlers.handlePhoto(ctx);
+      }
+      
+      // چک کردن چت فعال رندوم
+      const activeChat = await randomChatService.getUserActiveChat(ctx.state.user.id);
+      if (activeChat) {
+        return randomChatHandler.handleChatMessage(ctx, 'photo');
+      }
+    });
+
+    // ✅ دریافت موقعیت جغرافیایی (فقط برای پروفایل)
+    this.bot.on(message("location"), async (ctx) => {
+      if (ctx.session?.awaitingLocation) {
+        return profileHandlers.handleLocation(ctx);
       }
     });
 
     // ✅ دریافت متن (فقط برای پروفایل)
-    this.bot.on(message("text"), (ctx) => {
+    this.bot.on(message("text"), async (ctx) => {
+      // جستجوی مخاطب خاص
+      if (ctx.session?.searchState?.type === 'specific_contact') {
+        return userSearchHandlers.processSpecificContactInput(ctx);
+      }
+
       // پیام دایرکت
       if (ctx.session?.awaitingDirectMessage) {
         const text = ctx.message.text;
@@ -437,6 +605,59 @@ class TelegramBot {
       if (ctx.session?.profileEdit) {
         return profileHandlers.handleTextInput(ctx);
       }
+      
+      // چک کردن چت فعال رندوم
+      const activeChat = await randomChatService.getUserActiveChat(ctx.state.user.id);
+      if (activeChat) {
+        return randomChatHandler.handleChatMessage(ctx, 'text');
+      }
+    });
+
+    // ✅ دریافت forward message
+    this.bot.on(message("forward_date"), async (ctx) => {
+      // جستجوی مخاطب خاص با forward
+      if (ctx.session?.searchState?.type === 'specific_contact') {
+        return userSearchHandlers.processSpecificContactInput(ctx);
+      }
+    });
+
+    // ✅ دریافت contact
+    this.bot.on(message("contact"), async (ctx) => {
+      // جستجوی مخاطب خاص با contact
+      if (ctx.session?.searchState?.type === 'specific_contact') {
+        return userSearchHandlers.processSpecificContactInput(ctx);
+      }
+    });
+
+    // ✅ دریافت ویدیو
+    this.bot.on(message("video"), async (ctx) => {
+      const activeChat = await randomChatService.getUserActiveChat(ctx.state.user.id);
+      if (activeChat) {
+        return randomChatHandler.handleChatMessage(ctx, 'video');
+      }
+    });
+
+    // ✅ دریافت صدا
+    this.bot.on(message("voice"), async (ctx) => {
+      const activeChat = await randomChatService.getUserActiveChat(ctx.state.user.id);
+      if (activeChat) {
+        return randomChatHandler.handleChatMessage(ctx, 'voice');
+      }
+    });
+
+    // ✅ دریافت فایل
+    this.bot.on(message("document"), async (ctx) => {
+      const activeChat = await randomChatService.getUserActiveChat(ctx.state.user.id);
+      if (activeChat) {
+        return randomChatHandler.handleChatMessage(ctx, 'document');
+      }
+    });
+
+    // ===================================
+    // 🔍 INLINE QUERY HANDLER
+    // ===================================
+    this.bot.on("inline_query", async (ctx) => {
+      return userSearchHandlers.handleInlineQuery(ctx);
     });
 
     logger.info("✅ Bot handlers loaded");

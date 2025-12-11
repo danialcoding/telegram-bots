@@ -34,11 +34,12 @@ export const profileKeyboards = {
    */
   edit: () =>
     Markup.inlineKeyboard([
-      [Markup.button.callback("👤 نام", "profile_edit_name")],
+      [Markup.button.callback("ِ۴ڤ نام", "profile_edit_name")],
       [Markup.button.callback("🎂 سن", "profile_edit_age")],
       [Markup.button.callback("🚻 جنسیت", "profile_edit_gender")],
       [Markup.button.callback("📍 استان", "profile_select_province")],
       [Markup.button.callback("🏙 شهر", "profile_edit_city")],
+      [Markup.button.callback("📍 موقعیت جغرافیایی", "profile_edit_location")],
       [Markup.button.callback("📝 بیوگرافی", "profile_edit_bio")],
       [Markup.button.callback("📸 تغییر عکس", "profile_change_photo")],
       [Markup.button.callback("🔙 بازگشت", "profile_view")],
@@ -50,8 +51,8 @@ export const profileKeyboards = {
   gender: () =>
     Markup.inlineKeyboard([
       [
-        Markup.button.callback("👨 مرد", "profile_gender_male"),
-        Markup.button.callback("👩 زن", "profile_gender_female"),
+        Markup.button.callback("🙍‍♂️ مرد", "profile_gender_male"),
+        Markup.button.callback("🙍‍♀️ زن", "profile_gender_female"),
       ],
       [Markup.button.callback("❌ انصراف", "profile_cancel")],
     ]),

@@ -1,5 +1,6 @@
 import { MyContext } from "../../types/bot.types";
 import { getBalance, getCoinInfo } from "../../services/coin.service";
+import { COIN_REWARDS } from "../../utils/constants";
 import { Markup } from "telegraf";
 import logger from "../../utils/logger";
 import path from "path";
@@ -103,7 +104,7 @@ export class CoinHandler {
       const inviteText =
         `🎁 دعوت دوستان\n\n` +
         `به ازای هر دوست که از طریق لینک شما وارد ربات شود و پروفایل خود را تکمیل کند، ` +
-        `هم شما و هم دوست شما 10 سکه هدیه دریافت می‌کنید! 🎉\n\n` +
+        `هم شما و هم دوست شما ${COIN_REWARDS.REFERRAL} سکه هدیه دریافت می‌کنید! 🎉\n\n` +
         `📱 درباره ربات:\n` +
         `• چت ناشناس با افراد جدید\n` +
         `• پروفایل شخصی و جذاب\n` +

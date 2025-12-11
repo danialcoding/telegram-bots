@@ -13,6 +13,8 @@ interface CreateProfileData {
   bio: string;
   province: Province;
   city: City;
+  latitude?: number;
+  longitude?: number;
   photoFileId?: string;
 }
 
@@ -23,6 +25,8 @@ export interface UpdateProfileData {
   age?: number;
   province?: number;
   city?: number;
+  latitude?: number | null;
+  longitude?: number | null;
   bio?: string | null;
   photo_url?: string | null;
   photoFileId?: string;
@@ -38,6 +42,8 @@ interface Profile {
   bio: string;
   province: Province;
   city: City;
+  latitude?: number | null;
+  longitude?: number | null;
   photo_file_id: string | null;
   is_online: boolean;
   last_seen: Date;
@@ -215,34 +221,61 @@ class ProfileService {
       province?: number;
       city?: number;
       bio?: string | null;
+      latitude?: number | null;
+      longitude?: number | null;
     }
   ): Promise<void> {
     try {
       const existingProfile = await this.getProfile(userId);
 
       if (existingProfile) {
-        const queryText = `
-        UPDATE profiles
-        SET
-          display_name = COALESCE($2, display_name),
-          gender = COALESCE($3, gender),
-          age = COALESCE($4, age),
-          province = COALESCE($5, province),
-          city = COALESCE($6, city),
-          bio = COALESCE($7, bio),
-          updated_at = CURRENT_TIMESTAMP
-        WHERE user_id = $1
-      `;
+        // برای latitude و longitude از logic ویژه استفاده می‌کنیم
+        const updates: string[] = [];
+        const values: any[] = [userId];
+        let paramIndex = 2;
 
-        await pool.query(queryText, [
-          userId,
-          data.display_name,
-          data.gender,
-          data.age,
-          data.province,
-          data.city,
-          data.bio,
-        ]);
+        if (data.display_name !== undefined) {
+          updates.push(`display_name = $${paramIndex++}`);
+          values.push(data.display_name);
+        }
+        if (data.gender !== undefined) {
+          updates.push(`gender = $${paramIndex++}`);
+          values.push(data.gender);
+        }
+        if (data.age !== undefined) {
+          updates.push(`age = $${paramIndex++}`);
+          values.push(data.age);
+        }
+        if (data.province !== undefined) {
+          updates.push(`province = $${paramIndex++}`);
+          values.push(data.province);
+        }
+        if (data.city !== undefined) {
+          updates.push(`city = $${paramIndex++}`);
+          values.push(data.city);
+        }
+        if (data.bio !== undefined) {
+          updates.push(`bio = $${paramIndex++}`);
+          values.push(data.bio);
+        }
+        if (data.latitude !== undefined) {
+          updates.push(`latitude = $${paramIndex++}`);
+          values.push(data.latitude);
+        }
+        if (data.longitude !== undefined) {
+          updates.push(`longitude = $${paramIndex++}`);
+          values.push(data.longitude);
+        }
+
+        if (updates.length > 0) {
+          updates.push('updated_at = CURRENT_TIMESTAMP');
+          const queryText = `
+            UPDATE profiles
+            SET ${updates.join(', ')}
+            WHERE user_id = $1
+          `;
+          await pool.query(queryText, values);
+        }
       } else {
         const user = await pool.query(
           "SELECT first_name FROM users WHERE id = $1",
@@ -256,9 +289,9 @@ class ProfileService {
         const queryText = `
         INSERT INTO profiles (
           user_id, custom_id, display_name, gender, age, 
-          province, city, bio, anonymous_link_token
+          province, city, bio, latitude, longitude, anonymous_link_token
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
       `;
 
         await pool.query(queryText, [
@@ -270,6 +303,8 @@ class ProfileService {
           data.province,
           data.city,
           data.bio,
+          data.latitude,
+          data.longitude,
           anonymousToken,
         ]);
       }
@@ -570,6 +605,8 @@ class ProfileService {
         p.province,
         p.city,
         p.photo_file_id,
+        p.latitude,
+        p.longitude,
         p.rating,
         p.total_chats,
         p.show_likes,

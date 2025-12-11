@@ -6,7 +6,9 @@ import { blockService } from "../../services/block.service";
 import { directMessageService } from "../../services/directMessage.service";
 import { getBalance, deductCoins, hasEnoughCoins, rewardReferral, rewardSignup } from "../../services/coin.service";
 import { coinHandler } from "./coin.handler";
+import { COIN_REWARDS } from "../../utils/constants";
 import logger from "../../utils/logger";
+import { getLastSeenText, isUserOnline } from "../../utils/helpers";
 import { profileKeyboards } from "../keyboards/profile.keyboard";
 import { mainMenuKeyboard } from "../keyboards/main.keyboard";
 import { MyContext } from "../../types/bot.types";
@@ -20,6 +22,70 @@ const DEFAULT_PHOTO_PATH = path.join(
   __dirname,
   "../../../public/images/user.jpg"
 );
+
+/**
+ * محاسبه فاصله بین دو نقطه جغرافیایی (فرمول Haversine)
+ * @returns فاصله به کیلومتر
+ */
+function calculateDistance(
+  lat1: number,
+  lon1: number,
+  lat2: number,
+  lon2: number
+): number {
+  const R = 6371; // شعاع زمین به کیلومتر
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLon = ((lon2 - lon1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  const distance = R * c;
+  return Math.round(distance * 10) / 10; // گرد کردن به یک رقم اعشار
+}
+
+/**
+ * دریافت متن موقعیت جغرافیایی برای نمایش در لیست‌ها
+ */
+export async function getLocationText(
+  targetLat: number | null | undefined,
+  targetLng: number | null | undefined,
+  myUserId: number
+): Promise<string> {
+  // تبدیل به number در صورت نیاز (PostgreSQL گاهی string برمی‌گرداند)
+  const lat = targetLat ? Number(targetLat) : null;
+  const lng = targetLng ? Number(targetLng) : null;
+  
+  logger.info(`🗺️ getLocationText: target=(${lat}, ${lng}), myUserId=${myUserId}`);
+  
+  if (!lat || !lng || isNaN(lat) || isNaN(lng)) {
+    logger.info(`🗺️ Target has no valid location, returning ❓`);
+    return "❓";
+  }
+
+  const myProfile = await profileService.getProfile(myUserId);
+  const myLat = myProfile?.latitude ? Number(myProfile.latitude) : null;
+  const myLng = myProfile?.longitude ? Number(myProfile.longitude) : null;
+  
+  logger.info(`🗺️ My location: (${myLat}, ${myLng})`);
+  
+  if (!myLat || !myLng || isNaN(myLat) || isNaN(myLng)) {
+    logger.info(`🗺️ I have no valid location, returning 📍`);
+    return "📍";
+  }
+
+  const distance = calculateDistance(myLat, myLng, lat, lng);
+  logger.info(`🗺️ Distance: ${distance}km`);
+
+  if (distance < 1) {
+    return `📍(${Math.round(distance * 1000)}m)`;
+  } else {
+    return `📍(${distance.toFixed(1)}km)`;
+  }
+}
 
 class ProfileHandlers {
   /**
@@ -43,36 +109,24 @@ class ProfileHandlers {
       // ✅ دریافت تعداد لایک‌ها
       const likesCount = await likeService.getLikesCount(profile.id);
 
-      // ✅ بررسی وضعیت آنلاین و چت فعال
-      const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
-      let isOnline = false;
-      
-      if (profile.is_online && profile.last_seen) {
-        const lastSeenDate = new Date(profile.last_seen);
-        isOnline = lastSeenDate > fiveMinutesAgo;
-      }
-
-      // ✅ تشخیص وضعیت: اگر چت فعال دارد فقط 🗣 نمایش بده
-      let statusText = '';
-      if (profile.has_active_chat) {
-        statusText = 'وضعیت هم‌اکنون 👀 🗣';
-      } else if (isOnline) {
-        statusText = 'وضعیت هم‌اکنون 👀 آنلایـــن';
-      } else {
-        statusText = 'وضعیت هم‌اکنون 👀 آفلایـــن';
-      }
+      // ✅ بررسی وضعیت آنلاین بر اساس last_seen (نه is_online دیتابیس)
+      const isOnline = isUserOnline(profile.last_seen);
+      const statusText = getLastSeenText(profile.last_seen, isOnline, profile.has_active_chat);
 
       // ✅ متن پروفایل با فرمت دقیق (بدون Markdown خاص)
+      const genderIcon = profile.gender === "male" ? "🙍‍♂️" : "🙍‍♀️";
+      const locationEmoji = profile.latitude && profile.longitude ? "📍" : "❓";
       const profileText =
         `👤 پروفایل شما\n\n` +
         `• نام: ${profile.display_name || profile.first_name}\n` +
         `• توضیحات: ${profile.bio || profile.first_name}\n` +
-        `• جنسیت: ${profile.gender === "male" ? "پسر" : "دختر"}\n` +
+        `• جنسیت: ${genderIcon} ${profile.gender === "male" ? "پسر" : "دختر"}\n` +
         `• استان: ${getProvinceById(profile.province)?.name || "نامشخص"}\n` +
         `• شهر: ${
           getCityById(profile.city, profile.province)?.name || "نامشخص"
         }\n` +
-        `• سن: ${profile.age}\n\n` +
+        `• سن: ${profile.age}\n` +
+        `• موقعیت: ${locationEmoji}\n\n` +
         `• تعداد لایک‌ها: ${likesCount}\n` +
         `${statusText}\n\n` +
         `🆔 آیدی: /user_${profile.custom_id}\n\n` +
@@ -130,41 +184,29 @@ class ProfileHandlers {
 
       if (!profile) {
         return await ctx.editMessageText(
-          "❌ شما هنوز پروفایل ندارید.\n" + 'روی "✏️ ویرایش پروفایل" کلیک کنید.'
+          "❌ شما هنوز پروفایل ندارید.\n" + 'روی "👤 پروفایل من" کلیک کنید.'
         );
       }
 
       const likesCount = await likeService.getLikesCount(profile.id);
 
-      // ✅ بررسی وضعیت آنلاین و چت فعال
-      const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
-      let isOnline = false;
-      
-      if (profile.is_online && profile.last_seen) {
-        const lastSeenDate = new Date(profile.last_seen);
-        isOnline = lastSeenDate > fiveMinutesAgo;
-      }
+      // ✅ بررسی وضعیت آنلاین بر اساس last_seen (نه is_online دیتابیس)
+      const isOnline = isUserOnline(profile.last_seen);
+      const statusText = getLastSeenText(profile.last_seen, isOnline, profile.has_active_chat);
 
-      // ✅ تشخیص وضعیت: اگر چت فعال دارد فقط 🗣 نمایش بده
-      let statusText = '';
-      if (profile.has_active_chat) {
-        statusText = 'وضعیت هم‌اکنون 👀 🗣';
-      } else if (isOnline) {
-        statusText = 'وضعیت هم‌اکنون 👀 آنلایـــن';
-      } else {
-        statusText = 'وضعیت هم‌اکنون 👀 آفلایـــن';
-      }
-
+      const genderIcon = profile.gender === "male" ? "🙍‍♂️" : "🙍‍♀️";
+      const locationEmoji = profile.latitude && profile.longitude ? "📍" : "❓";
       const profileText =
         `👤 پروفایل شما\n\n` +
         `• نام: ${profile.display_name || profile.first_name}\n` +
         `• توضیحات: ${profile.bio || profile.first_name}\n` +
-        `• جنسیت: ${profile.gender === "male" ? "پسر" : "دختر"}\n` +
+        `• جنسیت: ${genderIcon} ${profile.gender === "male" ? "پسر" : "دختر"}\n` +
         `• استان: ${getProvinceById(profile.province)?.name || "نامشخص"}\n` +
         `• شهر: ${
           getCityById(profile.city, profile.province)?.name || "نامشخص"
         }\n` +
-        `• سن: ${profile.age}\n\n` +
+        `• سن: ${profile.age}\n` +
+        `• موقعیت: ${locationEmoji}\n\n` +
         `• تعداد لایک‌ها: ${likesCount}\n` +
         `${statusText}\n\n` +
         `🆔 آیدی: /user_${profile.custom_id}\n\n` +
@@ -232,33 +274,26 @@ class ProfileHandlers {
 
     // ✅ دریافت وضعیت آنلاین و چت فعال
     const fullProfile = await profileService.getFullProfile(user.id);
-    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
-    let isOnline = false;
-    
-    if (fullProfile?.is_online && fullProfile?.last_seen) {
-      const lastSeenDate = new Date(fullProfile.last_seen);
-      isOnline = lastSeenDate > fiveMinutesAgo;
-    }
+    const isOnline = fullProfile?.is_online
+      ? true
+      : fullProfile?.last_seen
+      ? isUserOnline(fullProfile.last_seen)
+      : false;
+    const statusText = getLastSeenText(fullProfile?.last_seen || null, isOnline, fullProfile?.has_active_chat);
 
-    let statusText = '';
-    if (fullProfile?.has_active_chat) {
-      statusText = 'وضعیت هم‌اکنون 👀 🗣';
-    } else if (isOnline) {
-      statusText = 'وضعیت هم‌اکنون 👀 آنلایـــن';
-    } else {
-      statusText = 'وضعیت هم‌اکنون 👀 آفلایـــن';
-    }
-
+    const genderIcon = profile.gender === "male" ? "🙍‍♂️" : "🙍‍♀️";
+    const locationEmoji = profile.latitude && profile.longitude ? "📍" : "❓";
     const profileText =
       `<b>👤 پروفایل شما</b>\n\n` +
       `• نام: ${profile.display_name || profile.first_name}\n` +
       `• توضیحات: ${profile.bio || profile.first_name}\n` +
-      `• جنسیت: ${profile.gender === "male" ? "پسر" : "دختر"}\n` +
+      `• جنسیت: ${genderIcon} ${profile.gender === "male" ? "پسر" : "دختر"}\n` +
       `• استان: ${getProvinceById(profile.province)?.name || "نامشخص"}\n` +
       `• شهر: ${
         getCityById(profile.city, profile.province)?.name || "نامشخص"
       }\n` +
-      `• سن: ${profile.age}\n\n` +
+      `• سن: ${profile.age}\n` +
+      `• موقعیت: ${locationEmoji}\n\n` +
       `• تعداد لایک‌ها: ${likesCount}\n` +
       `${statusText}\n\n` +
       `🆔 آیدی: /user_${profile.custom_id}\n\n` +
@@ -419,6 +454,25 @@ class ProfileHandlers {
         return await this.requestPhoto(ctx);
       }
 
+      // ویرایش موقعیت جغرافیایی
+      if (action === "profile_edit_location") {
+        ctx.session.profileEdit = { step: "location" };
+        ctx.session.awaitingLocation = true;
+        try {
+          await ctx.deleteMessage();
+        } catch {}
+        return await ctx.reply(
+          "📍 موقعیت جغرافیایی خود را ارسال کنید:\n\n" +
+            "• روی دکمه 📎 کلیک کنید\n" +
+            "• موقعیت خود را انتخاب کنید\n\n" +
+            'یا روی "رد شدن" کلیک کنید.',
+          Markup.keyboard([
+            [Markup.button.locationRequest("📍 ارسال موقعیت")],
+            ["❌ انصراف"],
+          ]).resize()
+        );
+      }
+
       // ==================== حریم خصوصی ====================
       
       // فعال/غیرفعال کردن نمایش لایک
@@ -559,6 +613,19 @@ class ProfileHandlers {
         try {
           await ctx.deleteMessage();
         } catch {}
+        return await this.requestLocation(ctx);
+      }
+
+      // رد شدن موقعیت در ثبت نام
+      if (action === "profile_skip_location") {
+        if (ctx.session.profileEdit) {
+          ctx.session.profileEdit.latitude = null;
+          ctx.session.profileEdit.longitude = null;
+        }
+        delete ctx.session.awaitingLocation;
+        try {
+          await ctx.deleteMessage();
+        } catch {}
         return await this.requestPhoto(ctx);
       }
 
@@ -681,35 +748,41 @@ class ProfileHandlers {
         );
       }
 
-      // ✅ ساخت متن لیست مخاطبین
+      // ✅ ساخت متن لیست مخاطبین با موقعیت
+      const contactsTextPromises = contacts.map(async (contact, i) => {
+        const name = contact.display_name || contact.first_name || "بدون نام";
+        const genderIcon = contact.gender === "male" ? "🙍‍♂️" : "🙍‍♀️";
+        const age = contact.age || "❓";
+        
+        const lastActivity = contact.last_activity ? new Date(contact.last_activity) : null;
+        const isOnline = contact.is_online
+          ? true
+          : lastActivity
+          ? isUserOnline(lastActivity)
+          : false;
+        
+        const hasActiveChat = contact.has_active_chat || false;
+        const onlineStatus = getLastSeenText(lastActivity, isOnline, hasActiveChat);
+        
+        const province = getProvinceById(contact.province)?.name || "نامشخص";
+        const city = getCityById(contact.city, contact.province)?.name || "نامشخص";
+        const likesCount = contact.likes_count || 0;
+        
+        const locationText = await getLocationText(contact.latitude, contact.longitude, user.id);
+        
+        return (
+          `${(currentPage - 1) * 10 + i + 1}. ${age} ${genderIcon}${name} /user_${contact.custom_id}\n` +
+          `   ${province}(${city}) ${locationText} (🤍️${likesCount})\n` +
+          `   ${onlineStatus}\n` +
+          `   〰️〰️〰️〰️〰️〰️〰️〰️〰️〰️〰️`
+        );
+      });
+      
+      const contactsLines = await Promise.all(contactsTextPromises);
       const contactsText =
         `👥 لیست مخاطبین شما (${totalCount})\n` +
         `📄 صفحه ${currentPage}\n\n` +
-        contacts
-          .map((contact, i) => {
-            const name = contact.display_name || contact.first_name || "بدون نام";
-            const genderIcon = contact.gender === "male" ? "🙍" : "🙍‍♀️";
-            const age = contact.age || "❓";
-            
-            const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
-            const lastActivity = contact.last_activity ? new Date(contact.last_activity) : null;
-            const isOnline = contact.is_online && lastActivity && lastActivity > fiveMinutesAgo;
-            
-            const hasActiveChat = contact.has_active_chat || false;
-            const chatIcon = hasActiveChat ? " (🗣)" : "";
-            const onlineStatus = isOnline ? `👀 آنلایـــن${chatIcon}` : "⏸ آفلایـــن";
-            
-            const province = getProvinceById(contact.province)?.name || "نامشخص";
-            const city = getCityById(contact.city, contact.province)?.name || "نامشخص";
-            const likesCount = contact.likes_count || 0;
-            
-            return (
-              `${(currentPage - 1) * 10 + i + 1}. ${genderIcon}${age} ${name} /user_${contact.custom_id}\n` +
-              `   ${province}(${city}) (🤍️${likesCount})\n` +
-              `   هم‌اکنون ${onlineStatus}`
-            );
-          })
-          .join("\n\n");
+        contactsLines.join("\n\n");
 
       // دکمه‌های pagination
       const buttons = [];
@@ -810,34 +883,40 @@ class ProfileHandlers {
         );
       }
 
+      const blockedTextPromises = blockedUsers.map(async (u, i) => {
+        const name = u.display_name || u.first_name || "بدون نام";
+        const genderIcon = u.gender === "male" ? "🙍‍♂️" : "🙍‍♀️";
+        const age = u.age || "❓";
+        
+        const lastActivity = u.last_activity ? new Date(u.last_activity) : null;
+        const isOnline = u.is_online
+          ? true
+          : lastActivity
+          ? isUserOnline(lastActivity)
+          : false;
+        
+        const hasActiveChat = u.has_active_chat || false;
+        const onlineStatus = getLastSeenText(lastActivity, isOnline, hasActiveChat);
+        
+        const province = getProvinceById(u.province)?.name || "نامشخص";
+        const city = getCityById(u.city, u.province)?.name || "نامشخص";
+        const likesCount = u.likes_count || 0;
+        
+        const locationText = await getLocationText(u.latitude, u.longitude, user.id);
+        
+        return (
+          `${(currentPage - 1) * 10 + i + 1}. ${age} ${genderIcon}${name} /user_${u.custom_id}\n` +
+          `   ${province}(${city}) ${locationText} (🤍️${likesCount})\n` +
+          `   ${onlineStatus}\n` +
+          `   〰️〰️〰️〰️〰️〰️〰️〰️〰️〰️〰️`
+        );
+      });
+      
+      const blockedLines = await Promise.all(blockedTextPromises);
       const blockedText =
         `🚫 لیست افراد بلاک شده (${totalCount})\n` +
         `📄 صفحه ${currentPage}\n\n` +
-        blockedUsers
-          .map((u, i) => {
-            const name = u.display_name || u.first_name || "بدون نام";
-            const genderIcon = u.gender === "male" ? "🙍" : "🙍‍♀️";
-            const age = u.age || "❓";
-            
-            const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
-            const lastActivity = u.last_activity ? new Date(u.last_activity) : null;
-            const isOnline = u.is_online && lastActivity && lastActivity > fiveMinutesAgo;
-            
-            const hasActiveChat = u.has_active_chat || false;
-            const chatIcon = hasActiveChat ? " (🗣)" : "";
-            const onlineStatus = isOnline ? `👀 آنلایـــن${chatIcon}` : "⏸ آفلایـــن";
-            
-            const province = getProvinceById(u.province)?.name || "نامشخص";
-            const city = getCityById(u.city, u.province)?.name || "نامشخص";
-            const likesCount = u.likes_count || 0;
-            
-            return (
-              `${(currentPage - 1) * 10 + i + 1}. ${genderIcon}${age} ${name} /user_${u.custom_id}\n` +
-              `   ${province}(${city}) (🤍️${likesCount})\n` +
-              `   هم‌اکنون ${onlineStatus}`
-            );
-          })
-          .join("\n\n");
+        blockedLines.join("\n\n");
 
       // دکمه‌های pagination
       const buttons = [];
@@ -896,34 +975,40 @@ class ProfileHandlers {
         );
       }
 
+      const likersTextPromises = likers.map(async (l, i) => {
+        const name = l.display_name || l.first_name || "بدون نام";
+        const genderIcon = l.gender === "male" ? "🙍‍♂️" : "🙍‍♀️";
+        const age = l.age || "❓";
+        
+        const lastActivity = l.last_activity ? new Date(l.last_activity) : null;
+        const isOnline = l.is_online
+          ? true
+          : lastActivity
+          ? isUserOnline(lastActivity)
+          : false;
+        
+        const hasActiveChat = l.has_active_chat || false;
+        const onlineStatus = getLastSeenText(lastActivity, isOnline, hasActiveChat);
+        
+        const province = getProvinceById(l.province)?.name || "نامشخص";
+        const city = getCityById(l.city, l.province)?.name || "نامشخص";
+        const likesCount = l.likes_count || 0;
+        
+        const locationText = await getLocationText(l.latitude, l.longitude, user.id);
+        
+        return (
+          `${(currentPage - 1) * 10 + i + 1}. ${age} ${genderIcon}${name} /user_${l.custom_id}\n` +
+          `   ${province}(${city}) ${locationText} (🤍️${likesCount})\n` +
+          `   ${onlineStatus}\n` +
+          `   〰️〰️〰️〰️〰️〰️〰️〰️〰️〰️〰️`
+        );
+      });
+      
+      const likersLines = await Promise.all(likersTextPromises);
       const likersText =
         `❤️ افرادی که شما را لایک کرده‌اند (${totalCount})\n` +
         `📄 صفحه ${currentPage}\n\n` +
-        likers
-          .map((l, i) => {
-            const name = l.display_name || l.first_name || "بدون نام";
-            const genderIcon = l.gender === "male" ? "🙍" : "🙍‍♀️";
-            const age = l.age || "❓";
-            
-            const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
-            const lastActivity = l.last_activity ? new Date(l.last_activity) : null;
-            const isOnline = l.is_online && lastActivity && lastActivity > fiveMinutesAgo;
-            
-            const hasActiveChat = l.has_active_chat || false;
-            const chatIcon = hasActiveChat ? " (🗣)" : "";
-            const onlineStatus = isOnline ? `👀 آنلایـــن${chatIcon}` : "⏸ آفلایـــن";
-            
-            const province = getProvinceById(l.province)?.name || "نامشخص";
-            const city = getCityById(l.city, l.province)?.name || "نامشخص";
-            const likesCount = l.likes_count || 0;
-            
-            return (
-              `${(currentPage - 1) * 10 + i + 1}. ${genderIcon}${age} ${name} /user_${l.custom_id}\n` +
-              `   ${province}(${city}) (🤍️${likesCount})\n` +
-              `   هم‌اکنون ${onlineStatus}`
-            );
-          })
-          .join("\n\n");
+        likersLines.join("\n\n");
 
       // دکمه‌های pagination
       const buttons = [];
@@ -1233,15 +1318,44 @@ class ProfileHandlers {
       const likesCount = profile.likes_count || 0;
       const showLikes = profile.show_likes !== false;
 
-      // ✅ بررسی وضعیت آنلاین واقعی (5 دقیقه)
-      const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
-      let isOnline = false;
-      
-      if (profile.is_online && profile.last_activity) {
-        const lastActivityDate = new Date(profile.last_activity);
-        isOnline = lastActivityDate > fiveMinutesAgo;
-      }
+      // ✅ بررسی وضعیت آنلاین بر اساس last_activity (نه is_online دیتابیس)
+      const isOnline = isUserOnline(profile.last_activity);
 
+      // ✅ محاسبه فاصله اگر هر دو کاربر موقعیت دارند
+      let locationInfo = "";
+      
+      logger.info(`🗺️ Target profile location: lat=${profile.latitude}, lng=${profile.longitude}`);
+      
+      if (!profile.latitude || !profile.longitude) {
+        // کاربر مقابل موقعیت ندارد
+        locationInfo = "❓";
+      } else {
+        // کاربر مقابل موقعیت دارد
+        const myProfile = await profileService.getProfile(user.id);
+        logger.info(`🗺️ My profile location: lat=${myProfile?.latitude}, lng=${myProfile?.longitude}`);
+        
+        if (myProfile?.latitude && myProfile?.longitude) {
+          // هر دو موقعیت دارند - نمایش فاصله
+          const distance = calculateDistance(
+            myProfile.latitude,
+            myProfile.longitude,
+            profile.latitude,
+            profile.longitude
+          );
+          
+          logger.info(`🗺️ Calculated distance: ${distance} km`);
+          
+          if (distance < 1) {
+            locationInfo = `📍\n📏 فاصله: ${Math.round(distance * 1000)} متر`;
+          } else {
+            locationInfo = `📍\n📏 فاصله: ${distance.toFixed(2)} کیلومتر`;
+          }
+        } else {
+          // فقط کاربر مقابل موقعیت دارد
+          locationInfo = "📍";
+        }
+      }
+      
       const profileText =
         `👤 پروفایل کاربر\n\n` +
         `• نام: ${profile.display_name || "نامشخص"}\n` +
@@ -1251,9 +1365,10 @@ class ProfileHandlers {
           getCityById(profile.city, profile.province)?.name || "نامشخص"
         }\n` +
         `• سن: ${profile.age}\n` +
+        `• موقعیت: ${locationInfo}\n` +
         `${profile.bio ? `\n📝 ${profile.bio}\n` : ""}` +
         `\n🆔 آیدی: /user_${profile.custom_id}\n` +
-        `وضعیت: ${isOnline ? "👀 آنلایـــن" : "⏸ آفلایـــن"}`;
+        getLastSeenText(profile.last_activity || null, isOnline);
 
       // ✅ بررسی وضعیت بلاک
       const blockStatus = await blockService.getBlockStatus(
@@ -1404,6 +1519,29 @@ class ProfileHandlers {
   }
 
   /**
+   * درخواست موقعیت جغرافیایی
+   */
+  private async requestLocation(ctx: MyContext) {
+    if (!ctx.session.profileEdit) {
+      ctx.session.profileEdit = {};
+    }
+    ctx.session.profileEdit.step = "location";
+    ctx.session.awaitingLocation = true;
+
+    await ctx.reply(
+      "📍 موقعیت جغرافیایی خود را ارسال کنید:\n\n" +
+        "• روی دکمه '📍 ارسال موقعیت' کلیک کنید\n" +
+        "• موقعیت مکانی خود را از نقشه انتخاب کنید\n" +
+        "• این اطلاعات برای نمایش فاصله شما با سایر کاربران استفاده می‌شود\n\n" +
+        'برای رد کردن این مرحله روی "⏭ رد شدن" کلیک کنید.',
+      Markup.keyboard([
+        [Markup.button.locationRequest("📍 ارسال موقعیت")],
+        ["⏭ رد شدن", "❌ انصراف"],
+      ]).resize()
+    );
+  }
+
+  /**
    * ✅ مدیریت آپلود عکس
    */
   async handlePhoto(ctx: MyContext) {
@@ -1443,6 +1581,69 @@ class ProfileHandlers {
   }
 
   /**
+   * ✅ مدیریت دریافت موقعیت جغرافیایی
+   */
+  async handleLocation(ctx: MyContext) {
+    if (!ctx.message || !("location" in ctx.message)) {
+      return;
+    }
+
+    if (!ctx.session.awaitingLocation) {
+      return;
+    }
+
+    try {
+      const location = ctx.message.location;
+      if (!location) return;
+
+      const { latitude, longitude } = location;
+      const user = ctx.state.user;
+
+      // بررسی وجود پروفایل
+      const existingProfile = await profileService.getProfile(user.id);
+
+      // اگر پروفایل وجود دارد و در حال ویرایش است
+      if (existingProfile && ctx.session.profileEdit?.step === "location") {
+        logger.info(`🗺️ Updating location for user ${user.id}: lat=${latitude}, lng=${longitude}`);
+        await profileService.updateProfile(user.id, { latitude, longitude });
+        delete ctx.session.profileEdit;
+        delete ctx.session.awaitingLocation;
+
+        await ctx.reply(
+          "✅ موقعیت جغرافیایی شما به‌روزرسانی شد.",
+          Markup.removeKeyboard()
+        );
+
+        // نمایش پروفایل کامل
+        await this.showProfileMenu(ctx);
+        
+        // نمایش منوی اصلی
+        return await ctx.reply(
+          "برای ادامه از منوی زیر استفاده کنید:",
+          mainMenuKeyboard()
+        );
+      }
+
+      // اگر در حال ثبت نام است (پروفایل قبلا وجود ندارد)
+      if (!existingProfile && ctx.session.profileEdit) {
+        ctx.session.profileEdit.latitude = latitude;
+        ctx.session.profileEdit.longitude = longitude;
+        delete ctx.session.awaitingLocation;
+
+        await ctx.reply(
+          "✅ موقعیت جغرافیایی ثبت شد!",
+          Markup.removeKeyboard()
+        );
+
+        return await this.requestPhoto(ctx);
+      }
+    } catch (error) {
+      logger.error("❌ Location input error:", error);
+      await ctx.reply("⚠️ خطا در ثبت موقعیت.");
+    }
+  }
+
+  /**
    * مدیریت پیام‌های متنی (سن، بیو)
    */
   async handleTextInput(ctx: MyContext) {
@@ -1450,11 +1651,74 @@ class ProfileHandlers {
       return;
     }
 
+    const user = ctx.state.user;
+
+    // مدیریت دکمه رد شدن موقعیت
+    if (ctx.session.awaitingLocation && ctx.message.text === "⏭ رد شدن") {
+      // بررسی وجود پروفایل برای تشخیص حالت ویرایش یا ثبت نام
+      const existingProfile = await profileService.getProfile(user.id);
+      const isEditMode = existingProfile && ctx.session.profileEdit?.step === "location";
+
+      if (ctx.session.profileEdit) {
+        ctx.session.profileEdit.latitude = null;
+        ctx.session.profileEdit.longitude = null;
+      }
+      delete ctx.session.awaitingLocation;
+      
+      await ctx.reply(
+        "✅ مرحله موقعیت رد شد.",
+        Markup.removeKeyboard()
+      );
+      
+      // اگر در حالت ویرایش بود، پروفایل را نمایش بده
+      if (isEditMode) {
+        delete ctx.session.profileEdit;
+        await this.showProfileMenu(ctx);
+        return await ctx.reply(
+          "برای ادامه از منوی زیر استفاده کنید:",
+          mainMenuKeyboard()
+        );
+      }
+      
+      // اگر در حالت ثبت نام بود، به مرحله بعدی برو
+      return await this.requestPhoto(ctx);
+    }
+
+    // مدیریت دکمه انصراف در موقعیت
+    if (ctx.session.awaitingLocation && ctx.message.text === "❌ انصراف") {
+      // بررسی وجود پروفایل برای تشخیص حالت ویرایش یا ثبت نام
+      const existingProfile = await profileService.getProfile(user.id);
+      const isEditMode = existingProfile && ctx.session.profileEdit?.step === "location";
+
+      delete ctx.session.awaitingLocation;
+      
+      await ctx.reply(
+        "❌ عملیات لغو شد.",
+        Markup.removeKeyboard()
+      );
+      
+      // اگر در حالت ویرایش بود، پروفایل را نمایش بده
+      if (isEditMode) {
+        delete ctx.session.profileEdit;
+        await this.showProfileMenu(ctx);
+        return await ctx.reply(
+          "برای ادامه از منوی زیر استفاده کنید:",
+          mainMenuKeyboard()
+        );
+      }
+      
+      // اگر در حالت ثبت نام بود، به منوی اصلی برگرد
+      delete ctx.session.profileEdit;
+      return await ctx.reply(
+        "برای بازگشت به منو اصلی کلیک کنید:",
+        mainMenuKeyboard()
+      );
+    }
+
     if (!ctx.session.profileEdit) return;
 
     const step = ctx.session.profileEdit.step;
     const text = ctx.message.text;
-    const user = ctx.state.user;
 
     try {
       // ==================== ویرایش نام ====================
@@ -1569,7 +1833,7 @@ class ProfileHandlers {
           // اگه پیام قبلی حذف نشد مشکلی نیست
         }
 
-        return await this.requestPhoto(ctx);
+        return await this.requestLocation(ctx);
       }
     } catch (error) {
       logger.error("❌ Text input error:", error);
@@ -1605,10 +1869,13 @@ class ProfileHandlers {
         province: data.province_id,
         city: data.city_id,
         bio: data.bio || null,
+        latitude: data.latitude || null,
+        longitude: data.longitude || null,
       });
 
       delete ctx.session.profileEdit;
       delete ctx.session.awaitingPhoto;
+      delete ctx.session.awaitingLocation;
 
       // ✅ پیام اصلی تکمیل پروفایل
       await ctx.reply(
@@ -1624,7 +1891,7 @@ class ProfileHandlers {
       if (isNewProfile) {
         try {
           await rewardSignup(user.id);
-          await ctx.reply('🎁 شما 10 سکه بابت تکمیل پروفایل دریافت کردید!');
+          await ctx.reply(`🎁 شما ${COIN_REWARDS.SIGNUP} سکه بابت تکمیل پروفایل دریافت کردید!`);
           logger.info(`🎁 Signup reward granted to user ${user.id}`);
         } catch (error) {
           logger.error('❌ Error granting signup reward:', error);
@@ -1637,7 +1904,7 @@ class ProfileHandlers {
           await rewardReferral(user.referred_by, user.id);
           
           // پیام برای کاربر جدید
-          await ctx.reply('💰 شما 10 سکه اضافی بابت دعوت دوست دریافت کردید!');
+          await ctx.reply(`💰 شما ${COIN_REWARDS.REFERRAL} سکه اضافی بابت دعوت دوست دریافت کردید!`);
           
           // پیام برای معرف (referrer)
           try {
@@ -1649,7 +1916,7 @@ class ProfileHandlers {
             if (referrerUser.rows.length > 0) {
               await ctx.telegram.sendMessage(
                 referrerUser.rows[0].telegram_id,
-                '🎉 یکی از دوستان شما پروفایل خود را تکمیل کرد!\n💰 شما 10 سکه پاداش دریافت کردید!'
+                `🎉 یکی از دوستان شما پروفایل خود را تکمیل کرد!\n💰 شما ${COIN_REWARDS.REFERRAL} سکه پاداش دریافت کردید!`
               );
             }
           } catch (error) {
@@ -1954,7 +2221,7 @@ class ProfileHandlers {
         messages
           .map((msg, i) => {
             const name = msg.sender_name || msg.sender_first_name || "بدون نام";
-            const genderIcon = msg.sender_gender === "male" ? "🙍" : "🙍‍♀️";
+            const genderIcon = msg.sender_gender === "male" ? "🙍‍♂️" : "🙍‍♀️";
             const age = msg.sender_age || "❓";
             
             const province = getProvinceById(msg.sender_province)?.name || "نامشخص";
@@ -2038,7 +2305,7 @@ class ProfileHandlers {
         messages
           .map((msg, i) => {
             const name = msg.receiver_name || msg.receiver_first_name || "بدون نام";
-            const genderIcon = msg.receiver_gender === "male" ? "🙍" : "🙍‍♀️";
+            const genderIcon = msg.receiver_gender === "male" ? "🙍‍♂️" : "🙍‍♀️";
             const age = msg.receiver_age || "❓";
             
             const province = getProvinceById(msg.receiver_province)?.name || "نامشخص";

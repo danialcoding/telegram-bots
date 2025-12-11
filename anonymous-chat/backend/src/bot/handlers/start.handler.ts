@@ -1,6 +1,7 @@
 import { Context } from 'telegraf';
 import { mainMenuKeyboard } from '../keyboards/main.keyboard';
 import { userService } from '../../services/user.service';
+import { COIN_REWARDS } from '../../utils/constants';
 import logger from '../../utils/logger';
 
 /**
@@ -64,7 +65,7 @@ export const startHandler = async (ctx: Context) => {
         '• روی "👤 پروفایل من" کلیک کنید\n' +
         '• اطلاعات خود را وارد کنید\n' +
         '• عکس پروفایل آپلود کنید\n\n' +
-        '🎁 با تکمیل پروفایل 10 سکه هدیه دریافت می‌کنید!';
+        `🎁 با تکمیل پروفایل ${COIN_REWARDS.SIGNUP} سکه هدیه دریافت می‌کنید!`;
       
       await ctx.reply(welcomeText, mainMenuKeyboard());
     } else {
@@ -106,7 +107,7 @@ export const startHandler = async (ctx: Context) => {
         '• روی "👤 پروفایل من" کلیک کنید\n' +
         '• اطلاعات خود را وارد کنید\n' +
         '• عکس پروفایل آپلود کنید\n\n' +
-        '🎁 با تکمیل پروفایل 10 سکه هدیه دریافت می‌کنید!';
+        `🎁 با تکمیل پروفایل ${COIN_REWARDS.SIGNUP} سکه هدیه دریافت می‌کنید!`;
       
       await ctx.reply(welcomeText, mainMenuKeyboard());
     }
