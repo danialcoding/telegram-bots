@@ -48,6 +48,14 @@ export interface SessionData {
     filters?: any;
   };
   
+  // Report Data
+  reportData?: {
+    targetUserId: number;
+    step: 'select_reason' | 'enter_description';
+    reason?: string;
+    reasonKey?: string;
+  };
+  
   // Last Ended Chat (for delete command)
   lastEndedChatId?: number;
 }

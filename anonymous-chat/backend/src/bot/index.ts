@@ -16,6 +16,7 @@ import { profileHandlers } from "./handlers/profile.handler";
 import { coinHandler } from "./handlers/coin.handler";
 import randomChatHandler from "./handlers/randomChat.handler";
 import { userSearchHandlers } from "./handlers/userSearch.handler";
+import { reportHandler } from "./handlers/report.handler";
 import { randomChatService } from "../services/randomChat.service";
 
 // Middlewares
@@ -348,13 +349,25 @@ class TelegramBot {
     });
 
     // ===================================
-    // 🚨 REPORT ACTION (موقتاً غیرفعال)
+    // 🚨 REPORT ACTIONS
     // ===================================
     
-    // ✅ گزارش کاربر
+    // ✅ گزارش کاربر - نمایش فرم گزارش
     this.bot.action(/^report_user_(\d+)$/, async (ctx) => {
+      await ctx.answerCbQuery();
       const targetUserId = parseInt(ctx.match[1]);
-      await ctx.answerCbQuery("🚨 بخش گزارش به زودی فعال می‌شود...");
+      await reportHandler.showReportForm(ctx, targetUserId);
+    });
+
+    // ✅ انتخاب دلیل گزارش
+    this.bot.action(/^report_reason_(.+)$/, async (ctx) => {
+      const reasonKey = ctx.match[1];
+      await reportHandler.handleReasonSelection(ctx, reasonKey);
+    });
+
+    // ✅ لغو گزارش
+    this.bot.action("report_cancel", async (ctx) => {
+      await reportHandler.cancelReport(ctx);
     });
 
     // ===================================
@@ -599,6 +612,11 @@ class TelegramBot {
       if (ctx.session?.awaitingDirectMessage) {
         const text = ctx.message.text;
         return profileHandlers.processDirectMessageText(ctx, text);
+      }
+
+      // توضیحات گزارش (برای "دیگر موارد")
+      if (ctx.session?.reportData?.step === 'enter_description') {
+        return reportHandler.handleDescription(ctx);
       }
       
       // ویرایش پروفایل
