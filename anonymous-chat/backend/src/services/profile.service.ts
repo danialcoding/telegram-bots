@@ -373,7 +373,7 @@ class ProfileService {
   async hasActiveChat(userId: number): Promise<boolean> {
     const result = await pool.query(
       `SELECT EXISTS(
-        SELECT 1 FROM chats 
+        SELECT 1 FROM random_chats 
         WHERE (user1_id = $1 OR user2_id = $1) 
         AND status = 'active'
       ) as has_chat`,
@@ -571,7 +571,7 @@ class ProfileService {
         u.is_online,
         u.last_activity as last_seen,
         EXISTS(
-          SELECT 1 FROM chats 
+          SELECT 1 FROM random_chats 
           WHERE (user1_id = u.id OR user2_id = u.id) 
           AND status = 'active'
         ) as has_active_chat
@@ -641,17 +641,23 @@ class ProfileService {
             WHERE user_id = $2 AND contact_user_id = p.user_id
           ) as is_in_contacts,
           EXISTS(
-            SELECT 1 FROM chats
+            SELECT 1 FROM random_chats
             WHERE (user1_id = $2 AND user2_id = p.user_id)
                OR (user1_id = p.user_id AND user2_id = $2)
-          ) as has_chat_history
+          ) as has_chat_history,
+          EXISTS(
+            SELECT 1 FROM random_chats 
+            WHERE (user1_id = p.user_id OR user2_id = p.user_id) 
+            AND status = 'active'
+          ) as has_active_chat
         `
             : `
           FALSE as is_liked_by_viewer,
           FALSE as viewer_blocked_target,
           FALSE as target_blocked_viewer,
           FALSE as is_in_contacts,
-          FALSE as has_chat_history
+          FALSE as has_chat_history,
+          FALSE as has_active_chat
         `
         }
       FROM profiles p

@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import { getProvinceById, getCityById } from '../../utils/locations';
 import { profileService } from '../../services/profile.service';
-import { getLastSeenText, isUserOnline } from '../../utils/helpers';
+import { getLastSeenText, isUserOnline, getChatStatusText } from '../../utils/helpers';
 
 /**
  * محاسبه فاصله بین دو نقطه جغرافیایی (فرمول Haversine)
@@ -56,8 +56,11 @@ export async function formatUserDisplay(user: any, myUserId: number): Promise<st
     : lastActivity
     ? isUserOnline(lastActivity)
     : false;
+  const onlineStatus = getLastSeenText(lastActivity, isOnline);
+  
+  // وضعیت چت (جدا از وضعیت آنلاین)
   const hasActiveChat = user.has_active_chat || false;
-  const onlineStatus = getLastSeenText(lastActivity, isOnline, hasActiveChat);
+  const chatStatus = getChatStatusText(hasActiveChat);
 
   // ✅ محاسبه فاصله اگر هر دو کاربر موقعیت دارند
   let locationInfo = "";
@@ -89,7 +92,10 @@ export async function formatUserDisplay(user: any, myUserId: number): Promise<st
     }
   }
 
-  return `${age} ${gender}${displayName} ${customId}\n${location} ${locationInfo} (🤍️${likes})\n${onlineStatus}\n〰️〰️〰️〰️〰️〰️〰️〰️〰️〰️〰️`;
+  // ساخت خط وضعیت چت (فقط اگر در حال چت باشد)
+  const chatLine = chatStatus ? `\n${chatStatus}` : '';
+  
+  return `${age} ${gender}${displayName} ${customId}\n${location} ${locationInfo} (🤍️${likes})\n${onlineStatus}${chatLine}\n〰️〰️〰️〰️〰️〰️〰️〰️〰️〰️〰️`;
 }
 
 /**

@@ -2,19 +2,12 @@
  * محاسبه متن "آخرین بازدید" با threshold‌های زمانی دقیق
  * @param lastSeen - تاریخ آخرین فعالیت کاربر
  * @param isOnline - آیا کاربر آنلاین است؟ (طبق last_seen < 5 دقیقه)
- * @param hasActiveChat - آیا کاربر در چت فعال است؟
  * @returns متن وضعیت برای نمایش
  */
 export function getLastSeenText(
   lastSeen: Date | string | null,
-  isOnline: boolean,
-  hasActiveChat?: boolean
+  isOnline: boolean
 ): string {
-  // اگر در چت فعال است
-  if (hasActiveChat) {
-    return "وضعیت هم‌اکنون 👀 🗣";
-  }
-
   // اگر آنلاین است
   if (isOnline) {
     return "وضعیت هم‌اکنون 👀 آنلایـــن";
@@ -65,6 +58,18 @@ export function getLastSeenText(
   }
 
   return `آخرین بازدید: ${diffDays} روز پیش`;
+}
+
+/**
+ * دریافت متن وضعیت چت (فقط اگر در حال چت باشد)
+ * @param hasActiveChat - آیا کاربر در چت فعال است؟
+ * @returns متن "در حال چت" یا رشته خالی
+ */
+export function getChatStatusText(hasActiveChat?: boolean): string {
+  if (hasActiveChat === true) {
+    return "در حال چت🗣 ";
+  }
+  return "";
 }
 
 /**

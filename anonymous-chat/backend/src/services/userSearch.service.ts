@@ -44,7 +44,12 @@ class UserSearchService {
             u.id, u.telegram_id, u.username, u.first_name,
             p.display_name, p.gender, p.age, p.province, p.city, p.bio, p.latitude, p.longitude, 
             p.photo_file_id, p.custom_id, p.likes_count,
-            u.is_online, u.last_activity
+            u.is_online, u.last_activity,
+            EXISTS(
+              SELECT 1 FROM random_chats 
+              WHERE (user1_id = u.id OR user2_id = u.id) 
+              AND status = 'active'
+            ) as has_active_chat
           FROM users u
           INNER JOIN profiles p ON u.id = p.user_id
           WHERE p.province = (SELECT province FROM profiles WHERE user_id = $1)
@@ -90,7 +95,12 @@ class UserSearchService {
             u.id, u.telegram_id, u.username, u.first_name,
             p.display_name, p.gender, p.age, p.province, p.city, p.bio, p.latitude, p.longitude, 
             p.photo_file_id, p.custom_id, p.likes_count,
-            u.is_online, u.last_activity
+            u.is_online, u.last_activity,
+            EXISTS(
+              SELECT 1 FROM random_chats 
+              WHERE (user1_id = u.id OR user2_id = u.id) 
+              AND status = 'active'
+            ) as has_active_chat
           FROM users u
           INNER JOIN profiles p ON u.id = p.user_id
           WHERE ABS(p.age - (SELECT age FROM profiles WHERE user_id = $1)) <= 3
@@ -166,7 +176,12 @@ class UserSearchService {
           u.id, u.telegram_id, u.username, u.first_name,
           p.display_name, p.gender, p.age, p.province, p.city, p.bio, p.latitude, p.longitude, 
           p.photo_file_id, p.custom_id, p.likes_count,
-          u.is_online, u.last_activity
+          u.is_online, u.last_activity,
+            EXISTS(
+              SELECT 1 FROM random_chats 
+              WHERE (user1_id = u.id OR user2_id = u.id) 
+              AND status = 'active'
+            ) as has_active_chat
         FROM users u
         INNER JOIN profiles p ON u.id = p.user_id
         WHERE ${conditions.join(' AND ')}
@@ -196,7 +211,12 @@ class UserSearchService {
             u.id, u.telegram_id, u.username, u.first_name,
             p.display_name, p.gender, p.age, p.province, p.city, p.bio, p.latitude, p.longitude, 
             p.photo_file_id, p.custom_id, p.likes_count,
-            u.is_online, u.last_activity, u.created_at
+            u.is_online, u.last_activity, u.created_at,
+            EXISTS(
+              SELECT 1 FROM random_chats 
+              WHERE (user1_id = u.id OR user2_id = u.id) 
+              AND status = 'active'
+            ) as has_active_chat
           FROM users u
           INNER JOIN profiles p ON u.id = p.user_id
           WHERE u.id != $1
@@ -239,7 +259,12 @@ class UserSearchService {
             u.id, u.telegram_id, u.username, u.first_name,
             p.display_name, p.gender, p.age, p.province, p.city, p.bio, p.latitude, p.longitude, 
             p.photo_file_id, p.custom_id, p.likes_count,
-            u.is_online, u.last_activity
+            u.is_online, u.last_activity,
+            EXISTS(
+              SELECT 1 FROM random_chats 
+              WHERE (user1_id = u.id OR user2_id = u.id) 
+              AND status = 'active'
+            ) as has_active_chat
           FROM users u
           INNER JOIN profiles p ON u.id = p.user_id
           WHERE u.id != $1
@@ -251,10 +276,11 @@ class UserSearchService {
               WHERE (blocker_id = $1 AND blocked_id = u.id) 
                  OR (blocker_id = u.id AND blocked_id = $1)
             )
+            -- فقط کاربرانی که الان چت فعال ندارند
             AND NOT EXISTS (
               SELECT 1 FROM random_chats 
-              WHERE (user1_id = $1 AND user2_id = u.id) 
-                 OR (user1_id = u.id AND user2_id = $1)
+              WHERE (user1_id = u.id OR user2_id = u.id) 
+              AND status = 'active'
             )
           ORDER BY u.is_online DESC, u.last_activity DESC
           LIMIT 300
@@ -287,7 +313,12 @@ class UserSearchService {
             p.display_name, p.gender, p.age, p.province, p.city, p.bio, p.latitude, p.longitude, 
             p.photo_file_id, p.custom_id, p.likes_count,
             u.is_online, u.last_activity,
-            rc.ended_at
+            rc.ended_at,
+            EXISTS(
+              SELECT 1 FROM random_chats 
+              WHERE (user1_id = u.id OR user2_id = u.id) 
+              AND status = 'active'
+            ) as has_active_chat
           FROM random_chats rc
           INNER JOIN users u ON (
             CASE 
@@ -337,7 +368,12 @@ class UserSearchService {
             u.id, u.telegram_id, u.username, u.first_name,
             p.display_name, p.gender, p.age, p.province, p.city, p.bio, p.latitude, p.longitude, 
             p.photo_file_id, p.custom_id, p.likes_count,
-            u.is_online, u.last_activity
+            u.is_online, u.last_activity,
+            EXISTS(
+              SELECT 1 FROM random_chats 
+              WHERE (user1_id = u.id OR user2_id = u.id) 
+              AND status = 'active'
+            ) as has_active_chat
           FROM users u
           INNER JOIN profiles p ON u.id = p.user_id
           WHERE u.id != $1
@@ -376,7 +412,12 @@ class UserSearchService {
           u.id, u.telegram_id, u.username, u.first_name,
           p.display_name, p.gender, p.age, p.province, p.city, p.bio, p.latitude, p.longitude, 
           p.photo_file_id, p.custom_id, p.likes_count,
-          u.is_online, u.last_activity
+          u.is_online, u.last_activity,
+            EXISTS(
+              SELECT 1 FROM random_chats 
+              WHERE (user1_id = u.id OR user2_id = u.id) 
+              AND status = 'active'
+            ) as has_active_chat
         FROM users u
         INNER JOIN profiles p ON u.id = p.user_id
         WHERE p.custom_id = $1
@@ -402,7 +443,12 @@ class UserSearchService {
           u.id, u.telegram_id, u.username, u.first_name,
           p.display_name, p.gender, p.age, p.province, p.city, p.bio, p.latitude, p.longitude, 
           p.photo_file_id, p.custom_id, p.likes_count,
-          u.is_online, u.last_activity
+          u.is_online, u.last_activity,
+            EXISTS(
+              SELECT 1 FROM random_chats 
+              WHERE (user1_id = u.id OR user2_id = u.id) 
+              AND status = 'active'
+            ) as has_active_chat
         FROM users u
         LEFT JOIN profiles p ON u.id = p.user_id
         WHERE u.telegram_id = $1
@@ -427,7 +473,12 @@ class UserSearchService {
           u.id, u.telegram_id, u.username, u.first_name,
           p.display_name, p.gender, p.age, p.province, p.city, p.bio, p.latitude, p.longitude, 
           p.photo_file_id, p.custom_id, p.likes_count,
-          u.is_online, u.last_activity
+          u.is_online, u.last_activity,
+            EXISTS(
+              SELECT 1 FROM random_chats 
+              WHERE (user1_id = u.id OR user2_id = u.id) 
+              AND status = 'active'
+            ) as has_active_chat
         FROM users u
         LEFT JOIN profiles p ON u.id = p.user_id
         WHERE LOWER(u.username) = LOWER($1)
@@ -511,7 +562,12 @@ class UserSearchService {
           u.id, u.telegram_id, u.username, u.first_name,
           p.display_name, p.gender, p.age, p.province, p.city, p.bio, p.latitude, p.longitude, 
           p.photo_file_id, p.custom_id, p.likes_count,
-          u.is_online, u.last_activity
+          u.is_online, u.last_activity,
+            EXISTS(
+              SELECT 1 FROM random_chats 
+              WHERE (user1_id = u.id OR user2_id = u.id) 
+              AND status = 'active'
+            ) as has_active_chat
         FROM users u
         LEFT JOIN profiles p ON u.id = p.user_id
         WHERE u.id = ANY($1)

@@ -8,7 +8,7 @@ import { getBalance, deductCoins, hasEnoughCoins, rewardReferral, rewardSignup }
 import { coinHandler } from "./coin.handler";
 import { COIN_REWARDS } from "../../utils/constants";
 import logger from "../../utils/logger";
-import { getLastSeenText, isUserOnline, parseIntPersian } from "../../utils/helpers";
+import { getLastSeenText, isUserOnline, getChatStatusText, parseIntPersian } from "../../utils/helpers";
 import { profileKeyboards } from "../keyboards/profile.keyboard";
 import { mainMenuKeyboard } from "../keyboards/main.keyboard";
 import { MyContext } from "../../types/bot.types";
@@ -111,7 +111,9 @@ class ProfileHandlers {
 
       // ✅ بررسی وضعیت آنلاین بر اساس last_seen (نه is_online دیتابیس)
       const isOnline = isUserOnline(profile.last_seen);
-      const statusText = getLastSeenText(profile.last_seen, isOnline, profile.has_active_chat);
+      const statusText = getLastSeenText(profile.last_seen, isOnline);
+      const chatStatusText = getChatStatusText(profile.has_active_chat);
+      const chatLine = chatStatusText ? `${chatStatusText}\n` : '';
 
       // ✅ متن پروفایل با فرمت دقیق (بدون Markdown خاص)
       const genderIcon = profile.gender === "male" ? "🙍‍♂️" : "🙍‍♀️";
@@ -128,7 +130,7 @@ class ProfileHandlers {
         `• سن: ${profile.age}\n` +
         `• موقعیت: ${locationEmoji}\n\n` +
         `• تعداد لایک‌ها: ${likesCount}\n` +
-        `${statusText}\n\n` +
+        `${statusText}\n${chatLine}\n` +
         `🆔 آیدی: /user_${profile.custom_id}\n\n` +
         `تنظیم حالت سایلنت: /silent\n` +
         `حذف اکانت ربات: /deleted_account`;
@@ -192,7 +194,9 @@ class ProfileHandlers {
 
       // ✅ بررسی وضعیت آنلاین بر اساس last_seen (نه is_online دیتابیس)
       const isOnline = isUserOnline(profile.last_seen);
-      const statusText = getLastSeenText(profile.last_seen, isOnline, profile.has_active_chat);
+      const statusText = getLastSeenText(profile.last_seen, isOnline);
+      const chatStatusText = getChatStatusText(profile.has_active_chat);
+      const chatLine = chatStatusText ? `${chatStatusText}\n` : '';
 
       const genderIcon = profile.gender === "male" ? "🙍‍♂️" : "🙍‍♀️";
       const locationEmoji = profile.latitude && profile.longitude ? "📍" : "❓";
@@ -208,7 +212,7 @@ class ProfileHandlers {
         `• سن: ${profile.age}\n` +
         `• موقعیت: ${locationEmoji}\n\n` +
         `• تعداد لایک‌ها: ${likesCount}\n` +
-        `${statusText}\n\n` +
+        `${statusText}\n${chatLine}\n` +
         `🆔 آیدی: /user_${profile.custom_id}\n\n` +
         `تنظیم حالت سایلنت: /silent\n` +
         `حذف اکانت ربات: /deleted_account`;
@@ -279,7 +283,9 @@ class ProfileHandlers {
       : fullProfile?.last_seen
       ? isUserOnline(fullProfile.last_seen)
       : false;
-    const statusText = getLastSeenText(fullProfile?.last_seen || null, isOnline, fullProfile?.has_active_chat);
+    const statusText = getLastSeenText(fullProfile?.last_seen || null, isOnline);
+    const chatStatusText = getChatStatusText(fullProfile?.has_active_chat);
+    const chatLine = chatStatusText ? `${chatStatusText}\n` : '';
 
     const genderIcon = profile.gender === "male" ? "🙍‍♂️" : "🙍‍♀️";
     const locationEmoji = profile.latitude && profile.longitude ? "📍" : "❓";
@@ -295,7 +301,7 @@ class ProfileHandlers {
       `• سن: ${profile.age}\n` +
       `• موقعیت: ${locationEmoji}\n\n` +
       `• تعداد لایک‌ها: ${likesCount}\n` +
-      `${statusText}\n\n` +
+      `${statusText}\n${chatLine}\n` +
       `🆔 آیدی: /user_${profile.custom_id}\n\n` +
       `<b>✏️ کدام بخش را می‌خواهید ویرایش کنید؟</b>`;
 
@@ -761,8 +767,10 @@ class ProfileHandlers {
           ? isUserOnline(lastActivity)
           : false;
         
+        const onlineStatus = getLastSeenText(lastActivity, isOnline);
         const hasActiveChat = contact.has_active_chat || false;
-        const onlineStatus = getLastSeenText(lastActivity, isOnline, hasActiveChat);
+        const chatStatus = getChatStatusText(hasActiveChat);
+        const chatLine = chatStatus ? `\n   ${chatStatus}` : '';
         
         const province = getProvinceById(contact.province)?.name || "نامشخص";
         const city = getCityById(contact.city, contact.province)?.name || "نامشخص";
@@ -773,7 +781,7 @@ class ProfileHandlers {
         return (
           `${(currentPage - 1) * 10 + i + 1}. ${age} ${genderIcon}${name} /user_${contact.custom_id}\n` +
           `   ${province}(${city}) ${locationText} (🤍️${likesCount})\n` +
-          `   ${onlineStatus}\n` +
+          `   ${onlineStatus}${chatLine}\n` +
           `   〰️〰️〰️〰️〰️〰️〰️〰️〰️〰️〰️`
         );
       });
@@ -895,8 +903,10 @@ class ProfileHandlers {
           ? isUserOnline(lastActivity)
           : false;
         
+        const onlineStatus = getLastSeenText(lastActivity, isOnline);
         const hasActiveChat = u.has_active_chat || false;
-        const onlineStatus = getLastSeenText(lastActivity, isOnline, hasActiveChat);
+        const chatStatus = getChatStatusText(hasActiveChat);
+        const chatLine = chatStatus ? `\n   ${chatStatus}` : '';
         
         const province = getProvinceById(u.province)?.name || "نامشخص";
         const city = getCityById(u.city, u.province)?.name || "نامشخص";
@@ -907,7 +917,7 @@ class ProfileHandlers {
         return (
           `${(currentPage - 1) * 10 + i + 1}. ${age} ${genderIcon}${name} /user_${u.custom_id}\n` +
           `   ${province}(${city}) ${locationText} (🤍️${likesCount})\n` +
-          `   ${onlineStatus}\n` +
+          `   ${onlineStatus}${chatLine}\n` +
           `   〰️〰️〰️〰️〰️〰️〰️〰️〰️〰️〰️`
         );
       });
@@ -987,8 +997,10 @@ class ProfileHandlers {
           ? isUserOnline(lastActivity)
           : false;
         
+        const onlineStatus = getLastSeenText(lastActivity, isOnline);
         const hasActiveChat = l.has_active_chat || false;
-        const onlineStatus = getLastSeenText(lastActivity, isOnline, hasActiveChat);
+        const chatStatus = getChatStatusText(hasActiveChat);
+        const chatLine = chatStatus ? `\n   ${chatStatus}` : '';
         
         const province = getProvinceById(l.province)?.name || "نامشخص";
         const city = getCityById(l.city, l.province)?.name || "نامشخص";
@@ -999,7 +1011,7 @@ class ProfileHandlers {
         return (
           `${(currentPage - 1) * 10 + i + 1}. ${age} ${genderIcon}${name} /user_${l.custom_id}\n` +
           `   ${province}(${city}) ${locationText} (🤍️${likesCount})\n` +
-          `   ${onlineStatus}\n` +
+          `   ${onlineStatus}${chatLine}\n` +
           `   〰️〰️〰️〰️〰️〰️〰️〰️〰️〰️〰️`
         );
       });
@@ -1320,6 +1332,10 @@ class ProfileHandlers {
 
       // ✅ بررسی وضعیت آنلاین بر اساس last_activity (نه is_online دیتابیس)
       const isOnline = isUserOnline(profile.last_activity);
+      
+      // وضعیت چت
+      const chatStatusText = getChatStatusText(profile.has_active_chat);
+      const chatLine = chatStatusText ? `\n${chatStatusText}` : '';
 
       // ✅ محاسبه فاصله اگر هر دو کاربر موقعیت دارند
       let locationInfo = "";
@@ -1368,7 +1384,8 @@ class ProfileHandlers {
         `• موقعیت: ${locationInfo}\n` +
         `${profile.bio ? `\n📝 ${profile.bio}\n` : ""}` +
         `\n🆔 آیدی: /user_${profile.custom_id}\n` +
-        getLastSeenText(profile.last_activity || null, isOnline);
+        getLastSeenText(profile.last_activity || null, isOnline) +
+        chatLine;
 
       // ✅ بررسی وضعیت بلاک
       const blockStatus = await blockService.getBlockStatus(

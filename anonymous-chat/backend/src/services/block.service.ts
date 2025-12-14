@@ -114,7 +114,7 @@ class BlockService {
         p.likes_count,
         b.created_at as blocked_at,
         EXISTS(
-          SELECT 1 FROM chats 
+          SELECT 1 FROM random_chats 
           WHERE (user1_id = u.id OR user2_id = u.id) 
           AND status = 'active'
         ) as has_active_chat
