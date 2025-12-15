@@ -296,6 +296,13 @@ CREATE TABLE random_chat_messages (
     telegram_message_id_user1 INTEGER,
     telegram_message_id_user2 INTEGER,
     
+    -- ✅ پشتیبانی از reply
+    reply_to_message_id INTEGER REFERENCES random_chat_messages(id) ON DELETE SET NULL,
+    
+    -- ✅ پشتیبانی از ویرایش
+    is_edited BOOLEAN DEFAULT FALSE,
+    edited_at TIMESTAMP,
+    
     created_at TIMESTAMP DEFAULT NOW()
 );
 
@@ -351,6 +358,29 @@ CREATE TABLE blocks (
     
     CONSTRAINT blocks_users_different CHECK (blocker_id != blocked_id),
     CONSTRAINT blocks_unique_pair UNIQUE (blocker_id, blocked_id)
+);
+
+-- -------------------- CHAT REQUESTS --------------------
+
+CREATE TABLE chat_requests (
+    id SERIAL PRIMARY KEY,
+    sender_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    receiver_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    
+    status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'viewed', 'accepted', 'rejected', 'blocked', 'expired')),
+    
+    -- پیام نوتیف در تلگرام گیرنده
+    notification_message_id BIGINT,
+    
+    -- زمان‌ها
+    created_at TIMESTAMP DEFAULT NOW(),
+    viewed_at TIMESTAMP,
+    responded_at TIMESTAMP,
+    
+    -- آیا متصل شدند؟
+    connected BOOLEAN DEFAULT FALSE,
+    
+    CONSTRAINT chat_requests_users_different CHECK (sender_id != receiver_id)
 );
 
 
@@ -599,6 +629,13 @@ CREATE INDEX idx_contacts_is_favorite ON contacts(is_favorite);
 
 CREATE INDEX idx_blocks_blocker_id ON blocks(blocker_id);
 CREATE INDEX idx_blocks_blocked_id ON blocks(blocked_id);
+
+CREATE INDEX idx_chat_requests_sender_id ON chat_requests(sender_id);
+CREATE INDEX idx_chat_requests_receiver_id ON chat_requests(receiver_id);
+CREATE INDEX idx_chat_requests_status ON chat_requests(status);
+CREATE INDEX idx_chat_requests_created_at ON chat_requests(created_at);
+CREATE INDEX idx_chat_requests_sender_receiver ON chat_requests(sender_id, receiver_id);
+CREATE INDEX idx_chat_requests_receiver_status ON chat_requests(receiver_id, status);
 
 CREATE INDEX idx_direct_messages_receiver ON direct_messages(receiver_id, is_read);
 CREATE INDEX idx_direct_messages_sender ON direct_messages(sender_id);

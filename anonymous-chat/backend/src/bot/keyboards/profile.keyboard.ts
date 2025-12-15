@@ -162,15 +162,23 @@ export const profileKeyboards = {
   },
 
   /**
-   * ✅ کیبورد درخواست چت (برای گیرنده)
+   * ✅ کیبورد درخواست چت (برای گیرنده - مشاهده اولیه)
    */
-  chatRequest: (senderId: number, senderCustomId: string) =>
+  chatRequestInitial: (requestId: number) =>
+    Markup.inlineKeyboard([
+      [Markup.button.callback("👁 مشاهده", `view_chat_request_${requestId}`)],
+    ]),
+
+  /**
+   * ✅ کیبورد درخواست چت (بعد از مشاهده)
+   */
+  chatRequest: (requestId: number, senderId: number) =>
     Markup.inlineKeyboard([
       [
-        Markup.button.callback("✅ قبول", `accept_chat_${senderId}`),
-        Markup.button.callback("❌ رد", `reject_chat_${senderId}`),
+        Markup.button.callback("✅ تایید درخواست", `accept_chat_req_${requestId}`),
+        Markup.button.callback("❌ رد درخواست", `reject_chat_req_${requestId}`),
       ],
-      [Markup.button.callback("👤 مشاهده پروفایل", `view_user_${senderId}`)],
+      [Markup.button.callback("🚫 بلاک کاربر", `block_from_req_${requestId}`)],
     ]),
 
   /**

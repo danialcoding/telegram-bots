@@ -6,17 +6,21 @@ import { blockService } from "../../services/block.service";
 import { directMessageService } from "../../services/directMessage.service";
 import { getBalance, deductCoins, hasEnoughCoins, rewardReferral, rewardSignup } from "../../services/coin.service";
 import { coinHandler } from "./coin.handler";
-import { COIN_REWARDS } from "../../utils/constants";
+import { COIN_REWARDS, COIN_COSTS, CHAT_REQUEST_COOLDOWN_MINUTES } from "../../utils/constants";
 import logger from "../../utils/logger";
 import { getLastSeenText, isUserOnline, getChatStatusText, parseIntPersian } from "../../utils/helpers";
 import { profileKeyboards } from "../keyboards/profile.keyboard";
 import { mainMenuKeyboard } from "../keyboards/main.keyboard";
+import { activeChatKeyboard } from "./randomChat.handler";
 import { MyContext } from "../../types/bot.types";
 import { getProvinceById, getCityById } from "../../utils/locations";
 import { Markup } from "telegraf";
 import path from "path";
 import fs from "fs";
 import { pool } from "../../database/db";
+import { chatRequestService } from "../../services/chatRequest.service";
+import { randomChatService } from "../../services/randomChat.service";
+import { userService } from "../../services/user.service";
 
 const DEFAULT_PHOTO_PATH = path.join(
   __dirname,
@@ -1283,7 +1287,10 @@ class ProfileHandlers {
       await blockService.unblockUser(user.id, targetUserId);
       await ctx.answerCbQuery("✅ کاربر آنبلاک شد");
 
-      // ✅ به‌روزرسانی کیبورد بدون ارسال مجدد
+      // ✅ بررسی مجدد وضعیت بلاک (برای اطمینان از عدم کش)
+      const blockStatus = await blockService.getBlockStatus(user.id, targetUserId);
+      
+      // ✅ به‌روزرسانی پروفایل با وضعیت جدید
       const profile = await profileService.getPublicProfile(
         { userId: targetUserId },
         user.id
@@ -1293,14 +1300,25 @@ class ProfileHandlers {
         const likesCount = profile.likes_count || 0;
         const showLikes = profile.show_likes !== false;
 
-        // کیبورد عادی (بدون بلاک)
-        const keyboard = profileKeyboards.publicProfile(targetUserId, {
-          isLiked: profile.is_liked_by_viewer || false,
-          isInContacts: profile.is_in_contacts || false,
-          hasChatHistory: profile.has_chat_history || false,
-          likesCount: likesCount,
-          showLikes: showLikes,
-        });
+        let keyboard;
+        
+        // بررسی دقیق وضعیت بلاک
+        if (blockStatus.user2BlockedUser1) {
+          // طرف مقابل هنوز ما را بلاک کرده است
+          keyboard = profileKeyboards.profileBlockedByThem(
+            targetUserId,
+            profile.is_liked_by_viewer || false
+          );
+        } else {
+          // کیبورد عادی (بدون بلاک)
+          keyboard = profileKeyboards.publicProfile(targetUserId, {
+            isLiked: profile.is_liked_by_viewer || false,
+            isInContacts: profile.is_in_contacts || false,
+            hasChatHistory: profile.has_chat_history || false,
+            likesCount: likesCount,
+            showLikes: showLikes,
+          });
+        }
 
         await ctx.editMessageReplyMarkup(keyboard.reply_markup);
       }
@@ -1395,6 +1413,7 @@ class ProfileHandlers {
 
       let keyboard;
 
+      // اولویت با "من بلاک کرده‌ام" است، حتی اگر طرف مقابل هم بلاک کرده باشد
       if (blockStatus.user1BlockedUser2) {
         // ✅ من طرف مقابل را بلاک کرده‌ام
         keyboard = profileKeyboards.profileBlockedByMe(targetUserId, {
@@ -1403,7 +1422,7 @@ class ProfileHandlers {
           showLikes: showLikes,
         });
       } else if (blockStatus.user2BlockedUser1) {
-        // ✅ طرف مقابل من را بلاک کرده
+        // ✅ طرف مقابل من را بلاک کرده (و من او را بلاک نکرده‌ام)
         keyboard = profileKeyboards.profileBlockedByThem(
           targetUserId,
           profile.is_liked_by_viewer || false
@@ -1967,9 +1986,36 @@ class ProfileHandlers {
     try {
       // ✅ بررسی سکه کاربر
       const balance = await getBalance(user.id);
-      if (balance < 1) {
+      if (balance < COIN_COSTS.CHAT_REQUEST) {
         return await ctx.answerCbQuery(
-          "❌ برای ارسال درخواست چت باید حداقل 1 سکه داشته باشید.",
+          `❌ برای ارسال درخواست چت باید حداقل ${COIN_COSTS.CHAT_REQUEST} سکه داشته باشید.`,
+          { show_alert: true }
+        );
+      }
+
+      // ✅ بررسی آیا کاربر ارسال‌کننده در حال چت است
+      const senderInChat = await chatRequestService.isUserInChat(user.id);
+      if (senderInChat) {
+        return await ctx.answerCbQuery(
+          "❌ شما در حال گفتگوی دیگری هستید. ابتدا آن را پایان دهید.",
+          { show_alert: true }
+        );
+      }
+
+      // ✅ بررسی آیا کاربر مقابل در حال چت است
+      const receiverInChat = await chatRequestService.isUserInChat(targetUserId);
+      if (receiverInChat) {
+        return await ctx.answerCbQuery(
+          "⚠️ این کاربر در گفتگوی دیگری است.",
+          { show_alert: true }
+        );
+      }
+
+      // ✅ بررسی محدودیت زمانی (5 دقیقه)
+      const canSend = await chatRequestService.canSendRequest(user.id, targetUserId);
+      if (!canSend) {
+        return await ctx.answerCbQuery(
+          `❌ شما ${CHAT_REQUEST_COOLDOWN_MINUTES} دقیقه پیش به این کاربر درخواست ارسال کرده‌اید. لطفاً کمی صبر کنید.`,
           { show_alert: true }
         );
       }
@@ -1983,31 +2029,99 @@ class ProfileHandlers {
         );
       }
 
-      // ✅ دریافت اطلاعات پروفایل فرستنده
+      // ✅ دریافت اطلاعات کاربران
       const senderProfile = await profileService.getFullProfile(user.id);
-      if (!senderProfile) {
+      const receiverProfile = await profileService.getProfile(targetUserId);
+      
+      if (!senderProfile || !receiverProfile) {
         return await ctx.answerCbQuery("❌ خطا در دریافت اطلاعات", { show_alert: true });
       }
 
-      // ✅ ارسال درخواست به گیرنده
-      await ctx.telegram.sendMessage(
-        (await profileService.getProfile(targetUserId))?.user_id || targetUserId,
-        `💬 **درخواست چت جدید**\n\n` +
-        `از: ${senderProfile.display_name || senderProfile.first_name}\n` +
-        `آیدی: \`${senderProfile.custom_id}\`\n\n` +
-        `آیا می‌خواهید این درخواست را قبول کنید؟`,
-        {
-          parse_mode: "Markdown",
-          ...profileKeyboards.chatRequest(user.id, senderProfile.custom_id),
-        }
+      // ✅ ارسال پیام اولیه به گیرنده
+      const notificationMsg = await ctx.telegram.sendMessage(
+        receiverProfile.telegram_id,
+        `💬 درخواست چت جدید دارید!`,
+        profileKeyboards.chatRequestInitial(0) // موقتاً 0، بعداً آپدیت می‌شود
+      );
+
+      // ✅ ایجاد درخواست در دیتابیس
+      const request = await chatRequestService.createRequest(
+        user.id,
+        targetUserId,
+        notificationMsg.message_id
+      );
+
+      // ✅ آپدیت پیام با request ID واقعی
+      await ctx.telegram.editMessageReplyMarkup(
+        receiverProfile.telegram_id,
+        notificationMsg.message_id,
+        undefined,
+        profileKeyboards.chatRequestInitial(request.id).reply_markup
       );
 
       await ctx.answerCbQuery("✅ درخواست چت ارسال شد!", { show_alert: true });
       await ctx.reply("✅ درخواست چت شما ارسال شد. منتظر پاسخ باشید...");
 
+      logger.info(`✅ Chat request sent: ${user.id} -> ${targetUserId}`);
     } catch (error) {
       logger.error("❌ Chat request error:", error);
       await ctx.answerCbQuery("⚠️ خطا در ارسال درخواست", { show_alert: true });
+    }
+  }
+
+  /**
+   * ✅ مشاهده درخواست چت
+   */
+  async viewChatRequest(ctx: MyContext) {
+    if (!ctx.callbackQuery || !("data" in ctx.callbackQuery)) return;
+
+    const requestId = parseInt(
+      ctx.callbackQuery.data.replace("view_chat_request_", "")
+    );
+    const user = ctx.state.user;
+
+    try {
+      // دریافت اطلاعات درخواست
+      const request = await chatRequestService.getRequestById(requestId);
+      
+      if (!request || request.receiver_id !== user.id) {
+        return await ctx.answerCbQuery("❌ درخواست یافت نشد", { show_alert: true });
+      }
+
+      // علامت‌گذاری به عنوان مشاهده شده
+      await chatRequestService.markAsViewed(requestId);
+
+      // دریافت اطلاعات فرستنده
+      const senderProfile = await profileService.getFullProfile(request.sender_id);
+      if (!senderProfile) {
+        return await ctx.answerCbQuery("❌ خطا در دریافت اطلاعات", { show_alert: true });
+      }
+
+      // ارسال پیام به فرستنده
+      const senderUser = await userService.findById(request.sender_id);
+      const receiverProfile = await profileService.getProfile(user.id);
+      if (senderUser && receiverProfile) {
+        await ctx.telegram.sendMessage(
+          senderUser.telegram_id,
+          `👁 کاربر /user_${receiverProfile.custom_id} درخواست چت شما را مشاهده کرد.`
+        );
+      }
+
+      // ویرایش پیام با جزئیات کامل
+      await ctx.editMessageText(
+        `💬 درخواست چت جدید\n\n` +
+        `از: /user_${senderProfile.custom_id}\n` +
+        `نام: ${senderProfile.display_name || senderProfile.first_name}\n\n` +
+        `آیا می‌خواهید این درخواست را قبول کنید؟`,
+        profileKeyboards.chatRequest(requestId, request.sender_id)
+      );
+
+      await ctx.answerCbQuery("✅ درخواست مشاهده شد");
+      
+      logger.info(`✅ Chat request ${requestId} viewed by ${user.id}`);
+    } catch (error) {
+      logger.error("❌ View chat request error:", error);
+      await ctx.answerCbQuery("⚠️ خطا در مشاهده درخواست");
     }
   }
 
@@ -2017,22 +2131,74 @@ class ProfileHandlers {
   async acceptChatRequest(ctx: MyContext) {
     if (!ctx.callbackQuery || !("data" in ctx.callbackQuery)) return;
 
-    const senderId = parseInt(
-      ctx.callbackQuery.data.replace("accept_chat_", "")
+    const requestId = parseInt(
+      ctx.callbackQuery.data.replace("accept_chat_req_", "")
     );
     const user = ctx.state.user;
 
     try {
-      await ctx.answerCbQuery("✅ درخواست پذیرفته شد!");
-      await ctx.editMessageText(
-        "✅ شما این درخواست چت را پذیرفتید.\n" +
-        "چت به زودی شروع خواهد شد..."
+      // بررسی آیا گیرنده در حال چت است
+      const receiverInChat = await chatRequestService.isUserInChat(user.id);
+      if (receiverInChat) {
+        await ctx.answerCbQuery("❌ شما در حال گفتگوی دیگری هستید.", { show_alert: true });
+        await ctx.editMessageText("❌ شما در حال گفتگوی دیگری هستید. نمی‌توانید این درخواست را بپذیرید.");
+        return;
+      }
+
+      // قبول درخواست
+      const request = await chatRequestService.acceptRequest(requestId);
+      
+      if (!request) {
+        await ctx.answerCbQuery("❌ فرستنده در گفتگوی دیگری است.", { show_alert: true });
+        await ctx.editMessageText("⚠️ فرستنده در حال گفتگوی دیگری است.");
+        return;
+      }
+
+      // کسر سکه از فرستنده
+      await deductCoins(request.sender_id, COIN_COSTS.CHAT_REQUEST, 'spend', 'هزینه درخواست چت');
+
+      // دریافت اطلاعات کاربران
+      const senderUser = await userService.findByIdWithProfile(request.sender_id);
+      const receiverUser = await userService.findByIdWithProfile(user.id);
+
+      if (!senderUser || !receiverUser) {
+        throw new Error('User not found');
+      }
+
+      // ایجاد چت
+      const chat = await randomChatService.createChat(request.sender_id, user.id);
+
+      // اطلاع به گیرنده
+      await ctx.editMessageText("✅ شما درخواست را پذیرفتید. به کاربر مقابل متصل شدید!");
+
+      const receiverSafeMode = await randomChatService.isSafeModeEnabled(chat.id, user.id);
+      const senderGenderIcon = senderUser.gender === 'male' ? '🙍‍♂️' : '🙍‍♀️';
+
+      await ctx.reply(
+        `✅ به کاربر مقابل متصل شدید!\n\n` +
+        `${senderGenderIcon} ${senderUser.name || senderUser.first_name}\n` +
+        `🎂 سن: ${senderUser.age}\n\n` +
+        `💬 می‌توانید پیام‌های خود را ارسال کنید.`,
+        activeChatKeyboard(receiverSafeMode)
       );
 
-      // TODO: شروع چت با استفاده از chat.service
-      // await chatService.startChat(senderId, user.id);
+      // اطلاع به فرستنده
+      const senderProfile = await profileService.getProfile(user.id);
+      const receiverGenderIcon = receiverUser.gender === 'male' ? '🙍‍♂️' : '🙍‍♀️';
+      const senderSafeMode = await randomChatService.isSafeModeEnabled(chat.id, request.sender_id);
 
-      logger.info(`✅ Chat request accepted: ${senderId} -> ${user.id}`);
+      await ctx.telegram.sendMessage(
+        senderUser.telegram_id,
+        `✅ کاربر /user_${senderProfile?.custom_id} درخواست چت شما را تایید کرد!\n\n` +
+        `به کاربر مقابل متصل شدید!\n\n` +
+        `${receiverGenderIcon} ${receiverUser.name || receiverUser.first_name}\n` +
+        `🎂 سن: ${receiverUser.age}\n\n` +
+        `💬 می‌توانید پیام‌های خود را ارسال کنید.`,
+        activeChatKeyboard(senderSafeMode)
+      );
+
+      await ctx.answerCbQuery("✅ درخواست پذیرفته شد!");
+      logger.info(`✅ Chat request ${requestId} accepted, chat ${chat.id} created`);
     } catch (error) {
       logger.error("❌ Accept chat error:", error);
       await ctx.answerCbQuery("⚠️ خطا در پذیرش درخواست");
@@ -2045,21 +2211,78 @@ class ProfileHandlers {
   async rejectChatRequest(ctx: MyContext) {
     if (!ctx.callbackQuery || !("data" in ctx.callbackQuery)) return;
 
-    const senderId = parseInt(
-      ctx.callbackQuery.data.replace("reject_chat_", "")
+    const requestId = parseInt(
+      ctx.callbackQuery.data.replace("reject_chat_req_", "")
     );
+    const user = ctx.state.user;
 
     try {
+      const request = await chatRequestService.rejectRequest(requestId);
+      
+      if (!request) {
+        return await ctx.answerCbQuery("❌ درخواست یافت نشد");
+      }
+
       await ctx.answerCbQuery("❌ درخواست رد شد");
       await ctx.editMessageText("❌ شما این درخواست چت را رد کردید.");
 
-      // TODO: اطلاع رسانی به فرستنده
-      // await ctx.telegram.sendMessage(senderTelegramId, "❌ درخواست چت شما رد شد.");
+      // اطلاع رسانی به فرستنده
+      const senderUser = await userService.findById(request.sender_id);
+      const receiverProfile = await profileService.getProfile(user.id);
+      
+      if (senderUser && receiverProfile) {
+        await ctx.telegram.sendMessage(
+          senderUser.telegram_id,
+          `❌ کاربر /user_${receiverProfile.custom_id} درخواست چت شما را رد کرد.`
+        );
+      }
 
-      logger.info(`❌ Chat request rejected: ${senderId}`);
+      logger.info(`❌ Chat request ${requestId} rejected`);
     } catch (error) {
       logger.error("❌ Reject chat error:", error);
       await ctx.answerCbQuery("⚠️ خطا در رد درخواست");
+    }
+  }
+
+  /**
+   * ✅ بلاک کردن از طریق درخواست چت
+   */
+  async blockFromChatRequest(ctx: MyContext) {
+    if (!ctx.callbackQuery || !("data" in ctx.callbackQuery)) return;
+
+    const requestId = parseInt(
+      ctx.callbackQuery.data.replace("block_from_req_", "")
+    );
+    const user = ctx.state.user;
+
+    try {
+      const request = await chatRequestService.blockFromRequest(requestId);
+      
+      if (!request) {
+        return await ctx.answerCbQuery("❌ درخواست یافت نشد");
+      }
+
+      // بلاک کردن کاربر
+      await blockService.blockUser(user.id, request.sender_id);
+
+      await ctx.answerCbQuery("🚫 کاربر بلاک شد");
+      await ctx.editMessageText("🚫 شما این کاربر را بلاک کردید.");
+
+      // اطلاع رسانی به فرستنده
+      const senderUser = await userService.findById(request.sender_id);
+      const receiverProfile = await profileService.getProfile(user.id);
+      
+      if (senderUser && receiverProfile) {
+        await ctx.telegram.sendMessage(
+          senderUser.telegram_id,
+          `🚫 کاربر /user_${receiverProfile.custom_id} شما را بلاک کرده است.`
+        );
+      }
+
+      logger.info(`🚫 Chat request ${requestId} blocked by ${user.id}`);
+    } catch (error) {
+      logger.error("❌ Block from request error:", error);
+      await ctx.answerCbQuery("⚠️ خطا در بلاک کردن");
     }
   }
 

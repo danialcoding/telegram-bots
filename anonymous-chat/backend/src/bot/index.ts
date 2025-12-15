@@ -487,14 +487,24 @@ class TelegramBot {
       await profileHandlers.handleChatRequest(ctx);
     });
 
+    // ✅ مشاهده درخواست چت
+    this.bot.action(/^view_chat_request_(\d+)$/, async (ctx) => {
+      await profileHandlers.viewChatRequest(ctx);
+    });
+
     // ✅ قبول درخواست چت
-    this.bot.action(/^accept_chat_(\d+)$/, async (ctx) => {
+    this.bot.action(/^accept_chat_req_(\d+)$/, async (ctx) => {
       await profileHandlers.acceptChatRequest(ctx);
     });
 
     // ✅ رد درخواست چت
-    this.bot.action(/^reject_chat_(\d+)$/, async (ctx) => {
+    this.bot.action(/^reject_chat_req_(\d+)$/, async (ctx) => {
       await profileHandlers.rejectChatRequest(ctx);
+    });
+
+    // ✅ بلاک کردن از طریق درخواست چت
+    this.bot.action(/^block_from_req_(\d+)$/, async (ctx) => {
+      await profileHandlers.blockFromChatRequest(ctx);
     });
 
     // ✅ مشاهده پروفایل از طریق درخواست چت
@@ -672,6 +682,28 @@ class TelegramBot {
     });
 
     // ===================================
+    // ✅ MESSAGE REACTION HANDLER
+    // ===================================
+    this.bot.on("message_reaction", async (ctx: any) => {
+      try {
+        await randomChatHandler.handleMessageReaction(ctx);
+      } catch (error) {
+        logger.error('❌ Error in message_reaction handler:', error);
+      }
+    });
+
+    // ===================================
+    // ✅ EDITED MESSAGE HANDLER
+    // ===================================
+    this.bot.on("edited_message", async (ctx) => {
+      try {
+        await randomChatHandler.handleEditedMessage(ctx);
+      } catch (error) {
+        logger.error('❌ Error in edited_message handler:', error);
+      }
+    });
+
+    // ===================================
     // 🔍 INLINE QUERY HANDLER
     // ===================================
     this.bot.on("inline_query", async (ctx) => {
@@ -711,7 +743,16 @@ class TelegramBot {
       await this.bot.telegram.deleteWebhook({ drop_pending_updates: true });
       logger.info("🗑️ Webhook deleted");
 
-      await this.bot.launch();
+      await this.bot.launch({
+        allowedUpdates: [
+          'message',
+          'edited_message',
+          'callback_query',
+          'inline_query',
+          'message_reaction',
+          'chosen_inline_result'
+        ]
+      });
       logger.info("✅ Bot launched successfully");
 
       process.once("SIGINT", () => this.stop("SIGINT"));

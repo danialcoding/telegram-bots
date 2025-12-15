@@ -1,6 +1,7 @@
 import { Context, Markup, Telegraf } from 'telegraf';
 import { MyContext } from '../types/bot.types';
 import { userService } from '../../services/user.service';
+import { profileService } from '../../services/profile.service';
 import { addCoins, deductCoins } from '../../services/coin.service';
 import { randomChatService } from '../../services/randomChat.service';
 import { pool } from '../../database/db';
@@ -12,7 +13,7 @@ import * as path from 'path';
 /**
  * کیبورد چت فعال
  */
-const activeChatKeyboard = (safeModeEnabled: boolean) => Markup.keyboard([
+export const activeChatKeyboard = (safeModeEnabled: boolean) => Markup.keyboard([
   ['👁️ مشاهده پروفایل'],
   [safeModeEnabled ? '🔓 غیرفعال‌سازی حالت امن' : '🔒 فعال‌سازی حالت امن'],
   ['❌ اتمام چت'],
@@ -479,7 +480,9 @@ class RandomChatHandlers {
       const partnerId = randomChatService.getPartnerUserId(chat, user.id);
       const partnerData = await userService.findByIdWithProfile(partnerId);
 
-      const userName = user.name || user.first_name || 'کاربر';
+      // ✅ دریافت custom_id برای نمایش به جای نام
+      const userProfile = await profileService.getProfile(user.id);
+      const partnerProfile = await profileService.getProfile(partnerId);
 
       // بررسی بازگشت سکه برای کاربر مقابل (از همان متغیر messages استفاده می‌کنیم)
       let refundMessage = '';
@@ -503,10 +506,10 @@ class RandomChatHandlers {
         }
       }
 
-      // پیام به کاربر فعلی
+      // پیام به کاربر فعلی با ID کاربر مقابل
       await ctx.editMessageText(
         `❌ چت به پایان رسید.\n\n` +
-        `شما چت را تمام کردید.${refundMessage}\n\n` +
+        `شما چت با ${partnerProfile?.custom_id ? `/user_${partnerProfile.custom_id}` : 'کاربر'} را به پایان رساندید.${refundMessage}\n\n` +
         `🗑️ برای پاک کردن تمام پیام‌های این چت از دستور /delete_${chat.id} استفاده کنید.`,
         Markup.inlineKeyboard([
           [Markup.button.callback('🔙 بازگشت به منو', 'main_menu')],
@@ -516,11 +519,11 @@ class RandomChatHandlers {
       // بازگشت به کیبورد اصلی
       await ctx.reply('🏠 منوی اصلی', mainMenuKeyboard());
 
-      // پیام به کاربر مقابل
+      // پیام به کاربر مقابل با ID کلیک‌شدنی
       await ctx.telegram.sendMessage(
         partnerData!.telegram_id,
         `❌ چت به پایان رسید.\n\n` +
-        `${userName} چت را تمام کرد.${refundMessage}\n\n` +
+        `${userProfile?.custom_id ? `/user_${userProfile.custom_id}` : 'کاربر'} چت را تمام کرد.${refundMessage}\n\n` +
         `🗑️ برای پاک کردن تمام پیام‌های این چت از دستور /delete_${chat.id} استفاده کنید.`,
         Markup.inlineKeyboard([
           [Markup.button.callback('🔙 بازگشت به منو', 'main_menu')],
@@ -658,13 +661,46 @@ class RandomChatHandlers {
       const partnerSafeMode = await randomChatService.isSafeModeEnabled(chat.id, partnerId);
       const protectContent = userSafeMode || partnerSafeMode;
 
-      // ارسال پیام به کاربر مقابل با حالت امن
+      // ✅ بررسی reply - پیدا کردن message_id مقابل
+      let replyToMessageId = null;
+      let replyToDbId = null;
+      if (ctx.message && 'reply_to_message' in ctx.message && ctx.message.reply_to_message) {
+        const originalMessageId = ctx.message.reply_to_message.message_id;
+        
+        // پیدا کردن پیام در دیتابیس
+        const replyResult = await pool.query(
+          `SELECT id, telegram_message_id_user1, telegram_message_id_user2 
+           FROM random_chat_messages 
+           WHERE chat_id = $1 
+           AND (telegram_message_id_user1 = $2 OR telegram_message_id_user2 = $2)`,
+          [chat.id, originalMessageId]
+        );
+
+        if (replyResult.rows.length > 0) {
+          const replyMsg = replyResult.rows[0];
+          replyToDbId = replyMsg.id;
+          
+          // تعیین message_id مقابل
+          if (chat.user1_id === user.id) {
+            replyToMessageId = replyMsg.telegram_message_id_user2;
+          } else {
+            replyToMessageId = replyMsg.telegram_message_id_user1;
+          }
+        }
+      }
+
+      // ارسال پیام به کاربر مقابل با حالت امن و reply
       let sentMessage;
+      const sendOptions: any = { 
+        protect_content: protectContent,
+        ...(replyToMessageId && { reply_to_message_id: replyToMessageId })
+      };
+
       if (messageType === 'text' && ctx.message && 'text' in ctx.message) {
         sentMessage = await ctx.telegram.sendMessage(
           partnerData.telegram_id,
           ctx.message.text,
-          { protect_content: protectContent }
+          sendOptions
         );
       } else if (messageType === 'photo' && ctx.message && 'photo' in ctx.message) {
         const photo = ctx.message.photo[ctx.message.photo.length - 1];
@@ -672,8 +708,8 @@ class RandomChatHandlers {
           partnerData.telegram_id,
           photo.file_id,
           { 
-            caption: ctx.message.caption,
-            protect_content: protectContent 
+            ...sendOptions,
+            caption: ctx.message.caption
           }
         );
       } else if (messageType === 'video' && ctx.message && 'video' in ctx.message) {
@@ -681,23 +717,23 @@ class RandomChatHandlers {
           partnerData.telegram_id,
           ctx.message.video.file_id,
           { 
-            caption: ctx.message.caption,
-            protect_content: protectContent 
+            ...sendOptions,
+            caption: ctx.message.caption
           }
         );
       } else if (messageType === 'voice' && ctx.message && 'voice' in ctx.message) {
         sentMessage = await ctx.telegram.sendVoice(
           partnerData.telegram_id,
           ctx.message.voice.file_id,
-          { protect_content: protectContent }
+          sendOptions
         );
       } else if (messageType === 'document' && ctx.message && 'document' in ctx.message) {
         sentMessage = await ctx.telegram.sendDocument(
           partnerData.telegram_id,
           ctx.message.document.file_id,
           { 
-            caption: ctx.message.caption,
-            protect_content: protectContent 
+            ...sendOptions,
+            caption: ctx.message.caption
           }
         );
       }
@@ -723,8 +759,8 @@ class RandomChatHandlers {
         }
 
         await pool.query(
-          `INSERT INTO random_chat_messages (chat_id, sender_id, message_type, message_text, file_id, telegram_message_id_user1, telegram_message_id_user2)
-           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          `INSERT INTO random_chat_messages (chat_id, sender_id, message_type, message_text, file_id, telegram_message_id_user1, telegram_message_id_user2, reply_to_message_id)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
           [
             chat.id,
             user.id,
@@ -733,6 +769,7 @@ class RandomChatHandlers {
             fileId,
             chat.user1_id === user.id ? ctx.message.message_id : sentMessage.message_id,
             chat.user2_id === user.id ? ctx.message.message_id : sentMessage.message_id,
+            replyToDbId,
           ]
         );
       }
@@ -742,6 +779,144 @@ class RandomChatHandlers {
       logger.error('❌ Error handling chat message:', error);
       const keyboard = await getAppropriateKeyboard(user.id);
       await ctx.reply('⚠️ خطا در ارسال پیام', keyboard);
+    }
+  }
+
+  /**
+   * ✅ مدیریت reaction روی پیام
+   */
+  async handleMessageReaction(ctx: any) {
+    const user = ctx.state.user;
+
+    try {
+      const chat = await randomChatService.getUserActiveChat(user.id);
+      if (!chat) return;
+
+      const partnerId = randomChatService.getPartnerUserId(chat, user.id);
+      const partnerData = await userService.findById(partnerId);
+      if (!partnerData) return;
+
+      const messageId = ctx.messageReaction.message_id;
+      const newReaction = ctx.messageReaction.new_reaction;
+
+      // پیدا کردن message_id مقابل
+      const msgResult = await pool.query(
+        `SELECT telegram_message_id_user1, telegram_message_id_user2 
+         FROM random_chat_messages 
+         WHERE chat_id = $1 
+         AND (telegram_message_id_user1 = $2 OR telegram_message_id_user2 = $2)`,
+        [chat.id, messageId]
+      );
+
+      if (msgResult.rows.length > 0) {
+        const msg = msgResult.rows[0];
+        let partnerMessageId;
+
+        if (chat.user1_id === user.id) {
+          partnerMessageId = msg.telegram_message_id_user2;
+        } else {
+          partnerMessageId = msg.telegram_message_id_user1;
+        }
+
+        // ارسال reaction به کاربر مقابل
+        if (partnerMessageId && newReaction && newReaction.length > 0) {
+          await ctx.telegram.setMessageReaction(
+            partnerData.telegram_id,
+            partnerMessageId,
+            newReaction
+          );
+          logger.info(`👍 Reaction forwarded in chat ${chat.id}`);
+        }
+      }
+    } catch (error) {
+      logger.error('❌ Error handling message reaction:', error);
+    }
+  }
+
+  /**
+   * ✅ مدیریت ویرایش پیام
+   */
+  async handleEditedMessage(ctx: MyContext) {
+    const user = ctx.state.user;
+
+    try {
+      const chat = await randomChatService.getUserActiveChat(user.id);
+      if (!chat) return;
+
+      const partnerId = randomChatService.getPartnerUserId(chat, user.id);
+      const partnerData = await userService.findById(partnerId);
+      if (!partnerData) return;
+
+      if (!ctx.editedMessage || !('message_id' in ctx.editedMessage)) return;
+
+      const messageId = ctx.editedMessage.message_id;
+      let newText = '';
+
+      if ('text' in ctx.editedMessage) {
+        newText = ctx.editedMessage.text;
+      } else if ('caption' in ctx.editedMessage) {
+        newText = ctx.editedMessage.caption || '';
+      }
+
+      // پیدا کردن message_id مقابل
+      const msgResult = await pool.query(
+        `SELECT id, telegram_message_id_user1, telegram_message_id_user2, message_type
+         FROM random_chat_messages 
+         WHERE chat_id = $1 
+         AND (telegram_message_id_user1 = $2 OR telegram_message_id_user2 = $2)`,
+        [chat.id, messageId]
+      );
+
+      if (msgResult.rows.length > 0) {
+        const msg = msgResult.rows[0];
+        let partnerMessageId;
+
+        if (chat.user1_id === user.id) {
+          partnerMessageId = msg.telegram_message_id_user2;
+        } else {
+          partnerMessageId = msg.telegram_message_id_user1;
+        }
+
+        // به‌روزرسانی پیام برای کاربر مقابل
+        if (partnerMessageId) {
+          const editedText = `${newText}\n\n✏️ <i>کاربر مقابل این پیام را ویرایش کرد</i>`;
+
+          try {
+            if (msg.message_type === 'text') {
+              await ctx.telegram.editMessageText(
+                partnerData.telegram_id,
+                partnerMessageId,
+                undefined,
+                editedText,
+                { parse_mode: 'HTML' }
+              );
+            } else {
+              // برای عکس، ویدیو و غیره فقط caption را ویرایش می‌کنیم
+              await ctx.telegram.editMessageCaption(
+                partnerData.telegram_id,
+                partnerMessageId,
+                undefined,
+                editedText,
+                { parse_mode: 'HTML' }
+              );
+            }
+
+            // به‌روزرسانی دیتابیس
+            await pool.query(
+              `UPDATE random_chat_messages 
+               SET is_edited = true, edited_at = NOW(), message_text = $1
+               WHERE id = $2`,
+              [newText, msg.id]
+            );
+
+            logger.info(`✏️ Message edited in chat ${chat.id}`);
+          } catch (editError) {
+            logger.error('❌ Error editing message for partner:', editError);
+          }
+        }
+      }
+    } catch (error) {
+      logger.error('❌ Error handling edited message:', error);
     }
   }
 }
