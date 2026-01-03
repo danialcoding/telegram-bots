@@ -16,6 +16,7 @@ import * as path from 'path';
 export const activeChatKeyboard = (safeModeEnabled: boolean) => Markup.keyboard([
   ['👁️ مشاهده پروفایل'],
   [safeModeEnabled ? '🔓 غیرفعال‌سازی حالت امن' : '🔒 فعال‌سازی حالت امن'],
+  ['🎮 ارسال بازی'],
   ['❌ اتمام چت'],
 ]).resize();
 
@@ -42,6 +43,32 @@ const getAppropriateKeyboard = async (userId: number) => {
     logger.error('Error getting chat status for keyboard:', error);
   }
   return mainMenuKeyboard();
+};
+
+/**
+ * بررسی وضعیت چت فعال و نمایش کیبورد مناسب
+ * اگر کاربر در چت باشد، true برمی‌گرداند و کیبورد چت را نشان می‌دهد
+ */
+export const checkActiveChatAndRespond = async (ctx: MyContext): Promise<boolean> => {
+  try {
+    const user = ctx.state.user;
+    if (!user) return false;
+    
+    const activeChat = await randomChatService.getUserActiveChat(user.id);
+    if (activeChat) {
+      const safeModeEnabled = await randomChatService.isSafeModeEnabled(activeChat.id, user.id);
+      await ctx.reply(
+        '⚠️ شما در حال حاضر در یک چت فعال هستید.\n' +
+        'برای استفاده از سایر امکانات، ابتدا چت فعلی را پایان دهید.',
+        activeChatKeyboard(safeModeEnabled)
+      );
+      return true;
+    }
+    return false;
+  } catch (error) {
+    logger.error('Error checking active chat:', error);
+    return false;
+  }
 };
 
 
@@ -557,13 +584,14 @@ class RandomChatHandlers {
   }
 
   /**
-   * پاک کردن پیام‌های چت برای هر دو کاربر (فقط در تلگرام، نه در دیتابیس)
+   * پاک کردن پیام‌های چت برای هر دو کاربر (فقط از تلگرام، با soft delete در دیتابیس)
    */
   async deleteChatMessages(ctx: MyContext, chatId: number) {
     const user = ctx.state.user;
 
     try {
-      const messages = await randomChatService.getChatMessages(chatId);
+      // ✅ دریافت پیام‌های پاک نشده
+      const messages = await randomChatService.getActiveMessagesForUser(chatId, user.id);
       const chatData = await pool.query('SELECT * FROM random_chats WHERE id = $1', [chatId]);
 
       if (!chatData.rows[0]) {
@@ -578,10 +606,11 @@ class RandomChatHandlers {
         return await ctx.reply('⚠️ خطا در یافتن کاربران.', mainMenuKeyboard());
       }
 
+      const isUser1 = chat.user1_id === user.id;
       let deletedCountUser1 = 0;
       let deletedCountUser2 = 0;
 
-      // حذف پیام‌ها برای هر دو کاربر
+      // ✅ حذف پیام‌ها از تلگرام برای هر دو کاربر
       for (const msg of messages) {
         try {
           // حذف برای کاربر 1
@@ -604,14 +633,17 @@ class RandomChatHandlers {
         }
       }
 
+      // ✅ Soft delete در دیتابیس برای کاربر فعلی
+      await randomChatService.softDeleteMessages(chatId, user.id);
+
       const userName = user.name || user.first_name || 'کاربر';
-      const isUser1 = chat.user1_id === user.id;
       const partnerId = isUser1 ? chat.user2_id : chat.user1_id;
       const partnerData = await userService.findById(partnerId);
 
       // اطلاع به کاربر فعلی
       await ctx.reply(
-        `🗑️ ${isUser1 ? deletedCountUser1 : deletedCountUser2} پیام از چت ${chatId} برای شما پاک شد.`,
+        `🗑️ ${isUser1 ? deletedCountUser1 : deletedCountUser2} پیام از چت ${chatId} برای شما پاک شد.\n\n` +
+        `⚠️ توجه: پیام‌ها در دیتابیس برای مدیریت نگهداری می‌شوند.`,
         mainMenuKeyboard()
       );
 
@@ -620,7 +652,8 @@ class RandomChatHandlers {
         try {
           await ctx.telegram.sendMessage(
             partnerData.telegram_id,
-            `🗑️ ${isUser1 ? deletedCountUser2 : deletedCountUser1} پیام از چت ${chatId} توسط ${userName} پاک شد.`,
+            `🗑️ ${isUser1 ? deletedCountUser2 : deletedCountUser1} پیام از چت ${chatId} توسط ${userName} پاک شد.\n\n` +
+            `⚠️ پیام‌ها برای شما حذف شده‌اند اما در دیتابیس باقی مانده‌اند.`,
             mainMenuKeyboard()
           );
         } catch (error) {
@@ -628,7 +661,7 @@ class RandomChatHandlers {
         }
       }
 
-      logger.info(`✅ User ${user.id} deleted messages from chat ${chatId} for both users`);
+      logger.info(`✅ User ${user.id} soft deleted messages from chat ${chatId} (${deletedCountUser1 + deletedCountUser2} messages removed from Telegram)`);
     } catch (error) {
       logger.error('❌ Error deleting chat messages:', error);
       await ctx.reply('⚠️ خطا در پاک کردن پیام‌ها', mainMenuKeyboard());
@@ -742,25 +775,76 @@ class RandomChatHandlers {
       if (sentMessage && ctx.message) {
         let messageText = null;
         let fileId = null;
+        let localFilePath = null;
+        let fileSize = null;
+        let mimeType = null;
 
         if (messageType === 'text' && 'text' in ctx.message) {
           messageText = ctx.message.text;
         } else if (messageType === 'photo' && 'photo' in ctx.message) {
           fileId = ctx.message.photo[ctx.message.photo.length - 1].file_id;
           messageText = ctx.message.caption || null;
+          
+          // ✅ دانلود و ذخیره فایل
+          try {
+            const { storageService } = await import('../../utils/storage');
+            const fileInfo = await storageService.downloadAndSaveFile(ctx.telegram, fileId, 'photo');
+            localFilePath = fileInfo.localPath;
+            fileSize = fileInfo.fileSize;
+            mimeType = fileInfo.mimeType;
+            logger.info(`✅ Photo saved locally: ${localFilePath}`);
+          } catch (storageError) {
+            logger.error('❌ Error saving photo locally:', storageError);
+          }
         } else if (messageType === 'video' && 'video' in ctx.message) {
           fileId = ctx.message.video.file_id;
           messageText = ctx.message.caption || null;
+          
+          // ✅ دانلود و ذخیره فایل
+          try {
+            const { storageService } = await import('../../utils/storage');
+            const fileInfo = await storageService.downloadAndSaveFile(ctx.telegram, fileId, 'video');
+            localFilePath = fileInfo.localPath;
+            fileSize = fileInfo.fileSize;
+            mimeType = fileInfo.mimeType;
+            logger.info(`✅ Video saved locally: ${localFilePath}`);
+          } catch (storageError) {
+            logger.error('❌ Error saving video locally:', storageError);
+          }
         } else if (messageType === 'voice' && 'voice' in ctx.message) {
           fileId = ctx.message.voice.file_id;
+          
+          // ✅ دانلود و ذخیره فایل
+          try {
+            const { storageService } = await import('../../utils/storage');
+            const fileInfo = await storageService.downloadAndSaveFile(ctx.telegram, fileId, 'voice');
+            localFilePath = fileInfo.localPath;
+            fileSize = fileInfo.fileSize;
+            mimeType = fileInfo.mimeType;
+            logger.info(`✅ Voice saved locally: ${localFilePath}`);
+          } catch (storageError) {
+            logger.error('❌ Error saving voice locally:', storageError);
+          }
         } else if (messageType === 'document' && 'document' in ctx.message) {
           fileId = ctx.message.document.file_id;
           messageText = ctx.message.caption || null;
+          
+          // ✅ دانلود و ذخیره فایل
+          try {
+            const { storageService } = await import('../../utils/storage');
+            const fileInfo = await storageService.downloadAndSaveFile(ctx.telegram, fileId, 'document');
+            localFilePath = fileInfo.localPath;
+            fileSize = fileInfo.fileSize;
+            mimeType = fileInfo.mimeType;
+            logger.info(`✅ Document saved locally: ${localFilePath}`);
+          } catch (storageError) {
+            logger.error('❌ Error saving document locally:', storageError);
+          }
         }
 
         await pool.query(
-          `INSERT INTO random_chat_messages (chat_id, sender_id, message_type, message_text, file_id, telegram_message_id_user1, telegram_message_id_user2, reply_to_message_id)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+          `INSERT INTO random_chat_messages (chat_id, sender_id, message_type, message_text, file_id, telegram_message_id_user1, telegram_message_id_user2, reply_to_message_id, local_file_path, file_size, mime_type)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
           [
             chat.id,
             user.id,
@@ -770,6 +854,9 @@ class RandomChatHandlers {
             chat.user1_id === user.id ? ctx.message.message_id : sentMessage.message_id,
             chat.user2_id === user.id ? ctx.message.message_id : sentMessage.message_id,
             replyToDbId,
+            localFilePath,
+            fileSize,
+            mimeType,
           ]
         );
       }

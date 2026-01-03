@@ -283,15 +283,18 @@ class RandomChatService {
     messageText: string | null,
     fileId: string | null,
     telegramMessageIdUser1: number | null,
-    telegramMessageIdUser2: number | null
+    telegramMessageIdUser2: number | null,
+    localFilePath?: string | null,
+    fileSize?: number | null,
+    mimeType?: string | null
   ): Promise<ChatMessage> {
     try {
       const result = await pool.query(
         `INSERT INTO random_chat_messages 
-         (chat_id, sender_id, message_type, message_text, file_id, telegram_message_id_user1, telegram_message_id_user2)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         (chat_id, sender_id, message_type, message_text, file_id, telegram_message_id_user1, telegram_message_id_user2, local_file_path, file_size, mime_type)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
          RETURNING *`,
-        [chatId, senderId, messageType, messageText, fileId, telegramMessageIdUser1, telegramMessageIdUser2]
+        [chatId, senderId, messageType, messageText, fileId, telegramMessageIdUser1, telegramMessageIdUser2, localFilePath, fileSize, mimeType]
       );
 
       return result.rows[0];
@@ -334,6 +337,101 @@ class RandomChatService {
     } catch (error) {
       logger.error('❌ Error getting chat ended by:', error);
       return null;
+    }
+  }
+
+  /**
+   * ✅ Soft Delete پیام‌های چت برای یک کاربر
+   * (پیام‌ها از تلگرام پاک می‌شوند اما در دیتابیس باقی می‌مانند)
+   */
+  async softDeleteMessages(chatId: number, userId: number): Promise<number> {
+    try {
+      const chat = await pool.query(
+        `SELECT user1_id, user2_id FROM random_chats WHERE id = $1`,
+        [chatId]
+      );
+
+      if (!chat.rows[0]) {
+        throw new Error('Chat not found');
+      }
+
+      const isUser1 = chat.rows[0].user1_id === userId;
+      const deleteField = isUser1 ? 'is_deleted_user1' : 'is_deleted_user2';
+      const deletedAtField = isUser1 ? 'deleted_at_user1' : 'deleted_at_user2';
+      const deletedByField = isUser1 ? 'deleted_by_user1' : 'deleted_by_user2';
+
+      const result = await pool.query(
+        `UPDATE random_chat_messages 
+         SET ${deleteField} = true, 
+             ${deletedAtField} = NOW(), 
+             ${deletedByField} = $2
+         WHERE chat_id = $1 AND ${deleteField} = false
+         RETURNING id`,
+        [chatId, userId]
+      );
+
+      logger.info(`✅ Soft deleted ${result.rowCount} messages for user ${userId} in chat ${chatId}`);
+      return result.rowCount || 0;
+    } catch (error) {
+      logger.error('❌ Error soft deleting messages:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * ✅ دریافت پیام‌های پاک نشده برای یک کاربر
+   */
+  async getActiveMessagesForUser(chatId: number, userId: number): Promise<ChatMessage[]> {
+    try {
+      const chat = await pool.query(
+        `SELECT user1_id, user2_id FROM random_chats WHERE id = $1`,
+        [chatId]
+      );
+
+      if (!chat.rows[0]) {
+        return [];
+      }
+
+      const isUser1 = chat.rows[0].user1_id === userId;
+      const deleteField = isUser1 ? 'is_deleted_user1' : 'is_deleted_user2';
+
+      const result = await pool.query(
+        `SELECT * FROM random_chat_messages
+         WHERE chat_id = $1 AND ${deleteField} = false
+         ORDER BY created_at ASC`,
+        [chatId]
+      );
+
+      return result.rows;
+    } catch (error) {
+      logger.error('❌ Error getting active messages:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * ✅ بازیابی تمام پیام‌های چت (حتی پاک شده‌ها) - برای ادمین
+   */
+  async getAllMessagesIncludingDeleted(chatId: number): Promise<any[]> {
+    try {
+      const result = await pool.query(
+        `SELECT 
+          m.*,
+          u1.telegram_id as user1_telegram_id,
+          u2.telegram_id as user2_telegram_id
+         FROM random_chat_messages m
+         INNER JOIN random_chats rc ON m.chat_id = rc.id
+         INNER JOIN users u1 ON rc.user1_id = u1.id
+         INNER JOIN users u2 ON rc.user2_id = u2.id
+         WHERE m.chat_id = $1
+         ORDER BY m.created_at ASC`,
+        [chatId]
+      );
+
+      return result.rows;
+    } catch (error) {
+      logger.error('❌ Error getting all messages:', error);
+      throw error;
     }
   }
 }

@@ -48,6 +48,24 @@ export interface SessionData {
     filters?: any;
   };
   
+  // Advanced Search State
+  advancedSearch?: {
+    searchType: 'search_advanced' | 'search_specific';
+    gender?: 'male' | 'female' | 'all';
+    provinces: number[];
+    minAge: number | null;
+    maxAge: number | null;
+    lastActivity?: '1h' | '6h' | '1d' | '2d' | '3d' | 'all';
+  };
+  
+  // Chat Filter State
+  chatFilter?: {
+    gender?: 'male' | 'female' | 'all';
+    distance?: 'same_province' | 'not_same_province' | '100km' | '10km' | 'all';
+    minAge?: number | null;
+    maxAge?: number | null;
+  };
+  
   // Report Data
   reportData?: {
     targetUserId: number;

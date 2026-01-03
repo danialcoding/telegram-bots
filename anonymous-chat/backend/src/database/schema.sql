@@ -66,7 +66,18 @@ CREATE TABLE users (
     unblock_fine INTEGER DEFAULT 50,      -- اضافه شده
 
     is_silent BOOLEAN DEFAULT FALSE,              -- ✅ اضافه شد
-    silent_until TIMESTAMP,  
+    silent_until TIMESTAMPTZ,                     -- ✅ تغییر به TIMESTAMPTZ
+    
+    -- ✅ فیلتر درخواست چت
+    filter_gender VARCHAR(10),                    -- 'male', 'female', 'all'
+    filter_distance VARCHAR(20),                  -- 'same_province', 'not_same_province', '100km', '10km', 'all'
+    filter_min_age INTEGER,                       -- حداقل سن
+    filter_max_age INTEGER,                       -- حداکثر سن
+    filter_visible BOOLEAN DEFAULT FALSE,         -- نمایش فیلتر در پروفایل
+    
+    -- ✅ اشتراک VIP
+    is_vip BOOLEAN DEFAULT FALSE,                 -- آیا کاربر VIP است
+    vip_expires_at TIMESTAMPTZ,                   -- تاریخ انقضای VIP
     
     last_ended_chat_id INTEGER,                   -- ✅ آخرین چت پایان‌یافته برای دستور /delete
     
@@ -170,8 +181,8 @@ CREATE TABLE admins (
 CREATE TABLE chats (
     id SERIAL PRIMARY KEY,
     
-    user1_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    user2_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user1_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    user2_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
     
     is_gender_specific BOOLEAN DEFAULT FALSE,
     target_gender gender_type,
@@ -199,16 +210,28 @@ CREATE TABLE chats (
 
 CREATE TABLE messages (
     id SERIAL PRIMARY KEY,
-    chat_id INTEGER NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
-    sender_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    receiver_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    chat_id INTEGER NOT NULL REFERENCES chats(id) ON DELETE RESTRICT,
+    sender_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    receiver_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
     
     type message_type DEFAULT 'text',
     content TEXT,
     file_id VARCHAR(255),
     
+    -- ✅ ذخیره‌سازی فایل روی سرور
+    local_file_path TEXT,
+    file_size INTEGER,
+    mime_type VARCHAR(100),
+    
     is_read BOOLEAN DEFAULT FALSE,
     read_at TIMESTAMP,
+    
+    -- ✅ Soft Delete
+    is_deleted_sender BOOLEAN DEFAULT FALSE,
+    is_deleted_receiver BOOLEAN DEFAULT FALSE,
+    deleted_at_sender TIMESTAMP,
+    deleted_at_receiver TIMESTAMP,
+    deleted_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
     
     created_at TIMESTAMP DEFAULT NOW(),
     
@@ -222,12 +245,17 @@ CREATE TABLE messages (
 
 CREATE TABLE directs (
     id SERIAL PRIMARY KEY,
-    sender_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    receiver_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    sender_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    receiver_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
     
     type message_type DEFAULT 'text',
     content TEXT,
     file_id VARCHAR(255),
+    
+    -- ✅ ذخیره‌سازی فایل روی سرور
+    local_file_path TEXT,
+    file_size INTEGER,
+    mime_type VARCHAR(100),
     
     status direct_status DEFAULT 'sent',
     is_read BOOLEAN DEFAULT FALSE,
@@ -235,6 +263,13 @@ CREATE TABLE directs (
     
     reply_to_direct_id INTEGER REFERENCES directs(id) ON DELETE SET NULL,
     has_reply BOOLEAN DEFAULT FALSE,
+    
+    -- ✅ Soft Delete
+    is_deleted_sender BOOLEAN DEFAULT FALSE,
+    is_deleted_receiver BOOLEAN DEFAULT FALSE,
+    deleted_at_sender TIMESTAMP,
+    deleted_at_receiver TIMESTAMP,
+    deleted_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
     
     cost INTEGER DEFAULT 1,
     
@@ -261,8 +296,8 @@ CREATE TABLE random_chat_queue (
 
 CREATE TABLE random_chats (
     id SERIAL PRIMARY KEY,
-    user1_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    user2_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user1_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    user2_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
     
     status VARCHAR(20) DEFAULT 'active' CHECK (status IN ('active', 'ended')),
     safe_mode_user1 BOOLEAN DEFAULT FALSE,
@@ -286,12 +321,17 @@ ALTER TABLE users ADD CONSTRAINT fk_users_last_ended_chat_id
 
 CREATE TABLE random_chat_messages (
     id SERIAL PRIMARY KEY,
-    chat_id INTEGER NOT NULL REFERENCES random_chats(id) ON DELETE CASCADE,
-    sender_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    chat_id INTEGER NOT NULL REFERENCES random_chats(id) ON DELETE RESTRICT,
+    sender_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
     
     message_type VARCHAR(20) NOT NULL CHECK (message_type IN ('text', 'photo', 'video', 'voice', 'document', 'sticker')),
     message_text TEXT,
     file_id VARCHAR(255),
+    
+    -- ✅ ذخیره‌سازی فایل روی سرور
+    local_file_path TEXT,
+    file_size INTEGER,
+    mime_type VARCHAR(100),
     
     telegram_message_id_user1 INTEGER,
     telegram_message_id_user2 INTEGER,
@@ -302,6 +342,14 @@ CREATE TABLE random_chat_messages (
     -- ✅ پشتیبانی از ویرایش
     is_edited BOOLEAN DEFAULT FALSE,
     edited_at TIMESTAMP,
+    
+    -- ✅ Soft Delete - حذف از تلگرام ولی نگهداری در دیتابیس
+    is_deleted_user1 BOOLEAN DEFAULT FALSE,
+    is_deleted_user2 BOOLEAN DEFAULT FALSE,
+    deleted_at_user1 TIMESTAMP,
+    deleted_at_user2 TIMESTAMP,
+    deleted_by_user1 INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    deleted_by_user2 INTEGER REFERENCES users(id) ON DELETE SET NULL,
     
     created_at TIMESTAMP DEFAULT NOW()
 );
@@ -414,10 +462,25 @@ CREATE TABLE likes (
 
 CREATE TABLE direct_messages (
     id SERIAL PRIMARY KEY,
-    sender_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    receiver_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    sender_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    receiver_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
     message TEXT NOT NULL,
+    
+    -- ✅ پشتیبانی از فایل
+    file_id VARCHAR(255),
+    local_file_path TEXT,
+    file_size INTEGER,
+    mime_type VARCHAR(100),
+    
     is_read BOOLEAN DEFAULT FALSE,
+    
+    -- ✅ Soft Delete
+    is_deleted_sender BOOLEAN DEFAULT FALSE,
+    is_deleted_receiver BOOLEAN DEFAULT FALSE,
+    deleted_at_sender TIMESTAMP,
+    deleted_at_receiver TIMESTAMP,
+    deleted_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     
     CONSTRAINT different_users CHECK (sender_id != receiver_id)
@@ -429,7 +492,7 @@ CREATE TABLE direct_messages (
 CREATE TABLE anonymous_messages (
     id SERIAL PRIMARY KEY,
     sender_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
-    receiver_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    receiver_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
     
     link_token VARCHAR(100) NOT NULL,
     
@@ -437,12 +500,22 @@ CREATE TABLE anonymous_messages (
     content TEXT,
     file_id VARCHAR(255),
     
+    -- ✅ ذخیره‌سازی فایل روی سرور
+    local_file_path TEXT,
+    file_size INTEGER,
+    mime_type VARCHAR(100),
+    
     is_read BOOLEAN DEFAULT FALSE,
     read_at TIMESTAMP,
     is_sender_blocked BOOLEAN DEFAULT FALSE,
     
     reply_to_message_id INTEGER REFERENCES anonymous_messages(id) ON DELETE SET NULL,
     has_reply BOOLEAN DEFAULT FALSE,
+    
+    -- ✅ Soft Delete (فقط برای گیرنده)
+    is_deleted BOOLEAN DEFAULT FALSE,
+    deleted_at TIMESTAMP,
+    deleted_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
     
     created_at TIMESTAMP DEFAULT NOW(),
     
@@ -557,6 +630,42 @@ CREATE TABLE search_results (
     expires_at TIMESTAMP DEFAULT (CURRENT_TIMESTAMP + INTERVAL '1 hour')
 );
 
+-- -------------------- GAME SESSIONS --------------------
+
+CREATE TYPE game_type AS ENUM ('rock_paper_scissors', 'tic_tac_toe', 'truth_or_dare');
+CREATE TYPE game_status AS ENUM ('waiting', 'in_progress', 'completed', 'cancelled');
+CREATE TYPE rps_choice AS ENUM ('rock', 'paper', 'scissors');
+
+CREATE TABLE game_sessions (
+    id SERIAL PRIMARY KEY,
+    chat_id INTEGER NOT NULL REFERENCES random_chats(id) ON DELETE CASCADE,
+    game_type game_type NOT NULL,
+    status game_status DEFAULT 'waiting',
+    
+    -- Players
+    player1_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    player2_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    
+    -- Game data (JSON for flexibility)
+    game_data JSONB DEFAULT '{}',
+    
+    -- Winner
+    winner_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    
+    -- Timestamps
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    started_at TIMESTAMPTZ,
+    completed_at TIMESTAMPTZ,
+    
+    -- Indexes
+    CONSTRAINT check_different_players CHECK (player1_id != player2_id)
+);
+
+CREATE INDEX idx_game_sessions_chat ON game_sessions(chat_id);
+CREATE INDEX idx_game_sessions_status ON game_sessions(status);
+CREATE INDEX idx_game_sessions_players ON game_sessions(player1_id, player2_id);
+CREATE INDEX idx_game_sessions_created ON game_sessions(created_at DESC);
+
 -- ==================== INDEXES ====================
 -- (کپی دقیق همون‌ها - بدون تغییر)
 
@@ -608,6 +717,9 @@ CREATE INDEX idx_random_chats_active_user2 ON random_chats(user2_id, status) WHE
 CREATE INDEX idx_random_chat_messages_chat_id ON random_chat_messages(chat_id);
 CREATE INDEX idx_random_chat_messages_sender_id ON random_chat_messages(sender_id);
 CREATE INDEX idx_random_chat_messages_created_at ON random_chat_messages(created_at);
+CREATE INDEX idx_random_chat_messages_deleted_user1 ON random_chat_messages(chat_id, is_deleted_user1);
+CREATE INDEX idx_random_chat_messages_deleted_user2 ON random_chat_messages(chat_id, is_deleted_user2);
+CREATE INDEX idx_random_chat_messages_local_file ON random_chat_messages(local_file_path) WHERE local_file_path IS NOT NULL;
 
 CREATE INDEX idx_messages_chat_id ON messages(chat_id);
 CREATE INDEX idx_messages_sender_id ON messages(sender_id);
@@ -615,10 +727,16 @@ CREATE INDEX idx_messages_receiver_id ON messages(receiver_id);
 CREATE INDEX idx_messages_created_at ON messages(created_at);
 CREATE INDEX idx_messages_is_read ON messages(is_read);
 CREATE INDEX idx_messages_chat_created ON messages(chat_id, created_at);
+CREATE INDEX idx_messages_deleted_sender ON messages(chat_id, is_deleted_sender);
+CREATE INDEX idx_messages_deleted_receiver ON messages(chat_id, is_deleted_receiver);
+CREATE INDEX idx_messages_local_file ON messages(local_file_path) WHERE local_file_path IS NOT NULL;
 
 CREATE INDEX idx_directs_sender_id ON directs(sender_id);
 CREATE INDEX idx_directs_receiver_id ON directs(receiver_id);
 CREATE INDEX idx_directs_status ON directs(status);
+CREATE INDEX idx_directs_deleted_sender ON directs(sender_id, is_deleted_sender);
+CREATE INDEX idx_directs_deleted_receiver ON directs(receiver_id, is_deleted_receiver);
+CREATE INDEX idx_directs_local_file ON directs(local_file_path) WHERE local_file_path IS NOT NULL;
 CREATE INDEX idx_directs_is_read ON directs(is_read);
 CREATE INDEX idx_directs_created_at ON directs(created_at);
 CREATE INDEX idx_directs_receiver_status ON directs(receiver_id, status);
@@ -634,6 +752,9 @@ CREATE INDEX idx_chat_requests_sender_id ON chat_requests(sender_id);
 CREATE INDEX idx_chat_requests_receiver_id ON chat_requests(receiver_id);
 CREATE INDEX idx_chat_requests_status ON chat_requests(status);
 CREATE INDEX idx_chat_requests_created_at ON chat_requests(created_at);
+CREATE INDEX idx_direct_messages_deleted_sender ON direct_messages(sender_id, is_deleted_sender);
+CREATE INDEX idx_direct_messages_deleted_receiver ON direct_messages(receiver_id, is_deleted_receiver);
+CREATE INDEX idx_direct_messages_local_file ON direct_messages(local_file_path) WHERE local_file_path IS NOT NULL;
 CREATE INDEX idx_chat_requests_sender_receiver ON chat_requests(sender_id, receiver_id);
 CREATE INDEX idx_chat_requests_receiver_status ON chat_requests(receiver_id, status);
 
@@ -649,6 +770,8 @@ CREATE INDEX idx_anonymous_messages_sender_id ON anonymous_messages(sender_id);
 CREATE INDEX idx_anonymous_messages_receiver_id ON anonymous_messages(receiver_id);
 CREATE INDEX idx_anonymous_messages_link_token ON anonymous_messages(link_token);
 CREATE INDEX idx_anonymous_messages_created_at ON anonymous_messages(created_at);
+CREATE INDEX idx_anonymous_messages_deleted ON anonymous_messages(receiver_id, is_deleted);
+CREATE INDEX idx_anonymous_messages_local_file ON anonymous_messages(local_file_path) WHERE local_file_path IS NOT NULL;
 
 CREATE INDEX idx_search_results_code ON search_results(search_code);
 CREATE INDEX idx_search_results_user ON search_results(user_id);

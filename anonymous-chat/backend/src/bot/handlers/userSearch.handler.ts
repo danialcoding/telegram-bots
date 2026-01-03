@@ -1,11 +1,12 @@
 import { MyContext } from "../types/bot.types";
 import { userSearchService } from "../../services/userSearch.service";
-import { userSearchMenuKeyboard, backToSearchMenuKeyboard, genderSelectionKeyboard, userListKeyboard } from "../keyboards/userSearch.keyboard";
+import { userSearchMenuKeyboard, backToSearchMenuKeyboard, genderSelectionKeyboard, userListKeyboard, provinceSelectionKeyboard, ageRangeKeyboard, lastActivityKeyboard } from "../keyboards/userSearch.keyboard";
 import { mainMenuKeyboard } from "../keyboards/main.keyboard";
 import logger from "../../utils/logger";
 import { isUserOnline, convertPersianToEnglishNumbers } from "../../utils/helpers";
 import { Markup } from "telegraf";
 import { generateSearchCode, formatUserDisplay, getSearchTitle, formatSearchDateTime } from "../helpers/userList.helper";
+import { PROVINCES } from "../../utils/locations";
 
 class UserSearchHandlers {
   /**
@@ -107,21 +108,212 @@ class UserSearchHandlers {
   }
 
   /**
-   * جستجوی پیشرفته
+   * جستجوی پیشرفته - مرحله 1: انتخاب جنسیت
    */
   async handleAdvancedSearch(ctx: MyContext) {
     try {
-      // TODO: پیاده‌سازی فرم جستجوی پیشرفته
+      logger.info('🔍 Advanced search initiated');
+
+      // Initialize advanced search state
+      ctx.session.advancedSearch = {
+        searchType: 'search_advanced',
+        gender: undefined,
+        provinces: [],
+        minAge: null,
+        maxAge: null,
+        lastActivity: undefined,
+      };
+
+      logger.info('📝 Advanced search state initialized:', ctx.session.advancedSearch);
+
+      const messageText = '🔎 *جستجوی پیشرفته*\n\n🎌 چه کسایی رو نشونت بدم؟';
+      const keyboard = genderSelectionKeyboard('search_advanced');
+
+      logger.info('💬 Attempting to edit message...');
+      
+      await ctx.editMessageText(messageText, {
+        parse_mode: 'Markdown',
+        ...keyboard,
+      });
+      
+      logger.info('✅ Message edited successfully');
+    } catch (error) {
+      logger.error('❌ Error in advanced search:', error);
+      
+      // اگر editMessage کار نکرد، پیام جدید بفرست
+      try {
+        await ctx.reply('🔎 *جستجوی پیشرفته*\n\n🎌 چه کسایی رو نشونت بدم؟', {
+          parse_mode: 'Markdown',
+          ...genderSelectionKeyboard('search_advanced'),
+        });
+      } catch (replyError) {
+        logger.error('❌ Error sending reply:', replyError);
+        await ctx.reply('⚠️ خطا در جستجو');
+      }
+    }
+  }
+
+  /**
+   * جستجوی به مخاطب خاص - مرحله 1: انتخاب جنسیت
+   */
+  async handleSpecificContactSearch(ctx: MyContext) {
+    try {
+      // Check if already in this state to prevent duplicate edit
+      if (ctx.session.advancedSearch?.searchType === 'search_specific' && !ctx.session.advancedSearch?.gender) {
+        await ctx.answerCbQuery('در حال انتخاب جنسیت هستید');
+        return;
+      }
+
+      // Initialize search state
+      ctx.session.advancedSearch = {
+        searchType: 'search_specific',
+        gender: undefined,
+        provinces: [],
+        minAge: null,
+        maxAge: null,
+        lastActivity: undefined,
+      };
+
       await ctx.editMessageText(
-        '🔎 *جستجوی پیشرفته*\n\nاین بخش به زودی فعال می‌شود...',
+        '📞 *به مخاطب خاص وصلم کن*\n\n🎌 چه کسایی رو نشونت بدم؟',
         {
           parse_mode: 'Markdown',
-          ...backToSearchMenuKeyboard(),
+          ...genderSelectionKeyboard('search_specific'),
         }
       );
     } catch (error) {
-      logger.error('Error in advanced search:', error);
+      logger.error('Error in specific search:', error);
       await ctx.reply('⚠️ خطا در جستجو');
+    }
+  }
+
+  /**
+   * مرحله 2: نمایش انتخاب استان‌ها
+   */
+  async showProvinceSelection(ctx: MyContext, searchType: string, gender: string) {
+    try {
+      if (!ctx.session.advancedSearch) {
+        ctx.session.advancedSearch = {
+          searchType: searchType as any,
+          gender: gender as any,
+          provinces: [],
+          minAge: null,
+          maxAge: null,
+        };
+      } else {
+        ctx.session.advancedSearch.gender = gender as any;
+      }
+
+      const genderText = gender === 'male' ? 'پسر' : gender === 'female' ? 'دختر' : 'هردو';
+      const selectedProvinces = ctx.session.advancedSearch.provinces;
+      
+      let provinceNames = '[]';
+      if (selectedProvinces.length > 0) {
+        const names = selectedProvinces.map((id: number) => {
+          const province = PROVINCES.find(p => p.id === id);
+          return province ? province.name : '';
+        }).filter(Boolean);
+        provinceNames = `[${names.join('، ')}]`;
+      }
+
+      const messageText = `👫 جنسیت : [${genderText}]\n\n🎌 استان های انتخاب شده : ${provinceNames}\n\nاستان های مورد نظرتو انتخاب کن و در آخر گزینه «➡️ مرحله بعدی » رو بزن 👇`;
+
+      await ctx.editMessageText(
+        messageText,
+        provinceSelectionKeyboard(selectedProvinces, searchType)
+      );
+    } catch (error) {
+      logger.error('Error showing province selection:', error);
+      await ctx.reply('⚠️ خطا در نمایش استان‌ها');
+    }
+  }
+
+  /**
+   * مرحله 3: نمایش انتخاب بازه سنی
+   */
+  async showAgeRangeSelection(ctx: MyContext) {
+    try {
+      const state = ctx.session.advancedSearch;
+      if (!state) return;
+
+      const genderText = state.gender === 'male' ? 'پسر' : state.gender === 'female' ? 'دختر' : 'هردو';
+      
+      let provinceNames = '[]';
+      if (state.provinces.length > 0) {
+        if (state.provinces.length === PROVINCES.length) {
+          provinceNames = '[همه استان‌ها]';
+        } else {
+          const names = state.provinces.map((id: number) => {
+            const province = PROVINCES.find(p => p.id === id);
+            return province ? province.name : '';
+          }).filter(Boolean);
+          provinceNames = `[${names.join('، ')}]`;
+        }
+      }
+
+      const minAge = state.minAge !== null ? state.minAge : '❓';
+      const maxAge = state.maxAge !== null ? state.maxAge : '❓';
+      const agePrompt = state.minAge === null ? 'حداقل سن بازه رو انتخاب کن 👇' : 'حداکثر سن بازه رو انتخاب کن 👇';
+
+      const messageText = `👫 جنسیت : [${genderText}]\n\n🎌 استان های انتخاب شده : ${provinceNames}\n👥 بازه سنی : [${minAge} - ${maxAge}]\n\n${agePrompt}`;
+
+      await ctx.editMessageText(
+        messageText,
+        ageRangeKeyboard(state.minAge, state.maxAge, state.searchType)
+      );
+    } catch (error) {
+      logger.error('Error showing age range selection:', error);
+      await ctx.reply('⚠️ خطا در نمایش بازه سنی');
+    }
+  }
+
+  /**
+   * مرحله 4: نمایش انتخاب آخرین حضور
+   */
+  async showLastActivitySelection(ctx: MyContext) {
+    try {
+      const state = ctx.session.advancedSearch;
+      if (!state) return;
+
+      const genderText = state.gender === 'male' ? 'پسر' : state.gender === 'female' ? 'دختر' : 'هردو';
+      
+      let provinceNames = '[]';
+      if (state.provinces.length > 0) {
+        if (state.provinces.length === PROVINCES.length) {
+          provinceNames = '[همه استان‌ها]';
+        } else {
+          const names = state.provinces.map((id: number) => {
+            const province = PROVINCES.find(p => p.id === id);
+            return province ? province.name : '';
+          }).filter(Boolean);
+          provinceNames = `[${names.join('، ')}]`;
+        }
+      }
+
+      const ageRange = `[${state.minAge} - ${state.maxAge}]`;
+      
+      let activityText = '[]';
+      if (state.lastActivity) {
+        const activityMap: Record<string, string> = {
+          '1h': 'تا یک ساعت قبل',
+          '6h': 'تا ۶ ساعت قبل',
+          '1d': 'تا یک روز قبل',
+          '2d': 'تا دو روز قبل',
+          '3d': 'تا سه روز قبل',
+          'all': 'همه'
+        };
+        activityText = `[${activityMap[state.lastActivity]}]`;
+      }
+
+      const messageText = `👫 جنسیت : [${genderText}]\n\n🎌 استان های انتخاب شده : ${provinceNames}\n👥 بازه سنی : ${ageRange}\n👀 آخرین حضور : ${activityText}\n\nآخرین زمان حضور کاربر رو انتخاب کن 👇`;
+
+      await ctx.editMessageText(
+        messageText,
+        lastActivityKeyboard(state.searchType)
+      );
+    } catch (error) {
+      logger.error('Error showing last activity selection:', error);
+      await ctx.reply('⚠️ خطا در نمایش آخرین حضور');
     }
   }
 
@@ -181,32 +373,6 @@ class UserSearchHandlers {
       );
     } catch (error) {
       logger.error('Error in popular users search:', error);
-      await ctx.reply('⚠️ خطا در جستجو');
-    }
-  }
-
-  /**
-   * جستجوی مخاطب خاص
-   */
-  async handleSpecificContactSearch(ctx: MyContext) {
-    try {
-      await ctx.editMessageText(
-        '📞 *به مخاطب خاص وصلم کن*\n\n' +
-        'برای اینکه بتونم به مخاطب خاصت بطور ناشناس وصلت کنم، یکی از کارای زیر رو انجام بده:\n\n' +
-        '👈 *راه اول:* یه پیام متنی از کسی که می‌خوای بهش پیام ناشناس بفرستی رو الان به این ربات فوروارد کن تا ببینم عضو هست یا نه!\n\n' +
-        '👈 *راه دوم:* آیدی تلگرام (username@) مخاطبت رو ارسال کن توی ربات، تا ببینیم عضو ربات هست یا نه!\n\n' +
-        '👈 *راه سوم:* آیدی‌عددی (id number) اون شخص رو الان وارد ربات کن!\n\n' +
-        '_(در روش اول لازمه مخاطبت دسترسی بات‌ها به دیدن حسابش از طریق فوروارد پیام رو نبسته باشه)_',
-        {
-          parse_mode: 'Markdown',
-          ...backToSearchMenuKeyboard(),
-        }
-      );
-
-      // ذخیره state برای دریافت اطلاعات از کاربر
-      ctx.session.searchState = { type: 'specific_contact' };
-    } catch (error) {
-      logger.error('Error in specific contact search:', error);
       await ctx.reply('⚠️ خطا در جستجو');
     }
   }
@@ -365,6 +531,13 @@ class UserSearchHandlers {
     const limit = 10;
 
     try {
+      // For advanced and specific search, go to province selection
+      if (searchType === 'search_advanced' || searchType === 'search_specific') {
+        await this.showProvinceSelection(ctx, searchType, gender);
+        return;
+      }
+
+      // For other search types, proceed with immediate search
       let users: any[] = [];
       let totalCount = 0;
       const genderValue = gender === 'all' ? undefined : gender;
@@ -558,6 +731,209 @@ class UserSearchHandlers {
     } catch (error) {
       logger.error('Error handling inline query:', error);
       await ctx.answerInlineQuery([], { cache_time: 0 });
+    }
+  }
+
+  /**
+   * Handle province toggle (add/remove from selection)
+   */
+  async handleProvinceToggle(ctx: MyContext, searchType: string, provinceId: number) {
+    try {
+      if (!ctx.session.advancedSearch) return;
+
+      const state = ctx.session.advancedSearch;
+      const index = state.provinces.indexOf(provinceId);
+
+      if (index > -1) {
+        // Remove province
+        state.provinces.splice(index, 1);
+      } else {
+        // Add province
+        state.provinces.push(provinceId);
+      }
+
+      // Refresh the keyboard
+      await this.showProvinceSelection(ctx, searchType, state.gender!);
+    } catch (error) {
+      logger.error('Error toggling province:', error);
+    }
+  }
+
+  /**
+   * Handle select all provinces
+   */
+  async handleSelectAllProvinces(ctx: MyContext, searchType: string) {
+    try {
+      if (!ctx.session.advancedSearch) return;
+
+      const state = ctx.session.advancedSearch;
+      
+      if (state.provinces.length === PROVINCES.length) {
+        // Deselect all
+        state.provinces = [];
+      } else {
+        // Select all
+        state.provinces = PROVINCES.map(p => p.id);
+      }
+
+      // Refresh the keyboard
+      await this.showProvinceSelection(ctx, searchType, state.gender!);
+    } catch (error) {
+      logger.error('Error selecting all provinces:', error);
+    }
+  }
+
+  /**
+   * Handle age selection
+   */
+  async handleAgeSelection(ctx: MyContext, _searchType: string, age: number) {
+    try {
+      if (!ctx.session.advancedSearch) return;
+
+      const state = ctx.session.advancedSearch;
+
+      if (state.minAge === null) {
+        // Set minimum age
+        state.minAge = age;
+      } else if (state.maxAge === null) {
+        // Set maximum age
+        state.maxAge = age;
+        
+        // Ensure minAge <= maxAge
+        if (state.minAge > state.maxAge) {
+          [state.minAge, state.maxAge] = [state.maxAge, state.minAge];
+        }
+
+        // Both ages selected, move to next step
+        await this.showLastActivitySelection(ctx);
+        return;
+      } else {
+        // Reset and set new minimum
+        state.minAge = age;
+        state.maxAge = null;
+      }
+
+      // Refresh the keyboard
+      await this.showAgeRangeSelection(ctx);
+    } catch (error) {
+      logger.error('Error handling age selection:', error);
+    }
+  }
+
+  /**
+   * Handle select all ages
+   */
+  async handleSelectAllAges(ctx: MyContext) {
+    try {
+      if (!ctx.session.advancedSearch) return;
+
+      const state = ctx.session.advancedSearch;
+      state.minAge = 13;
+      state.maxAge = 99;
+
+      // Move to next step
+      await this.showLastActivitySelection(ctx);
+    } catch (error) {
+      logger.error('Error selecting all ages:', error);
+    }
+  }
+
+  /**
+   * Handle last activity selection and show results
+   */
+  async handleActivitySelection(ctx: MyContext, _searchType: string, activity: string) {
+    try {
+      if (!ctx.session.advancedSearch) return;
+
+      const state = ctx.session.advancedSearch;
+      state.lastActivity = activity as any;
+
+      // Now perform the search with all filters
+      await this.performAdvancedSearch(ctx);
+    } catch (error) {
+      logger.error('Error handling activity selection:', error);
+    }
+  }
+
+  /**
+   * Perform advanced search with all filters
+   */
+  async performAdvancedSearch(ctx: MyContext) {
+    try {
+      const state = ctx.session.advancedSearch;
+      if (!state) return;
+
+      const user = ctx.state.user;
+      const page = 1;
+      const limit = 10;
+
+      // Build filters
+      const genderValue = state.gender === 'all' ? undefined : state.gender;
+      const provinceIds = state.provinces.length === PROVINCES.length ? undefined : state.provinces;
+      
+      // Calculate activity timestamp
+      let activitySince: Date | undefined;
+      if (state.lastActivity && state.lastActivity !== 'all') {
+        const now = new Date();
+        switch (state.lastActivity) {
+          case '1h':
+            activitySince = new Date(now.getTime() - 1 * 60 * 60 * 1000);
+            break;
+          case '6h':
+            activitySince = new Date(now.getTime() - 6 * 60 * 60 * 1000);
+            break;
+          case '1d':
+            activitySince = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+            break;
+          case '2d':
+            activitySince = new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000);
+            break;
+          case '3d':
+            activitySince = new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000);
+            break;
+        }
+      }
+
+      // Debug logging
+      logger.info('Advanced search filters:', {
+        userId: user.id,
+        gender: genderValue || 'all',
+        minAge: state.minAge,
+        maxAge: state.maxAge,
+        provinceIds: provinceIds || 'all',
+        activitySince: activitySince?.toISOString() || 'all',
+        lastActivity: state.lastActivity
+      });
+
+      // Perform search
+      const users = await userSearchService.advancedSearch(
+        user.id,
+        page,
+        limit,
+        genderValue,
+        state.minAge!,
+        state.maxAge!,
+        provinceIds,
+        activitySince
+      );
+
+      const totalCount = users.length;
+
+      logger.info('Advanced search results:', {
+        totalUsers: totalCount,
+        userIds: users.map(u => u.id)
+      });
+
+      // Generate search code and save results
+      const searchCode = generateSearchCode(state.searchType, user.id);
+      const userIds = users.map(u => u.id);
+      await userSearchService.saveSearchResults(searchCode, user.id, state.searchType, userIds, genderValue);
+
+      await this.showUserList(ctx, users, state.searchType, page, totalCount, genderValue, searchCode);
+
+    } catch (error) {
+      logger.error('Error performing advanced search:', error);
+      await ctx.reply('⚠️ خطا در جستجو', backToSearchMenuKeyboard());
     }
   }
 }

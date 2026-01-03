@@ -14,9 +14,16 @@ import { MyContext, SessionData } from "../types/bot.types";
 import { startHandler } from "./handlers/start.handler";
 import { profileHandlers } from "./handlers/profile.handler";
 import { coinHandler } from "./handlers/coin.handler";
-import randomChatHandler from "./handlers/randomChat.handler";
+import randomChatHandler, { checkActiveChatAndRespond } from "./handlers/randomChat.handler";
 import { userSearchHandlers } from "./handlers/userSearch.handler";
 import { reportHandler } from "./handlers/report.handler";
+import { silentModeHandler } from "./handlers/silent.handler";
+import { deleteAccountHandler } from "./handlers/deleteAccount.handler";
+import { chatFilterHandler } from "./handlers/chatFilter.handler";
+import { settingsHandlers } from "./handlers/settings.handler";
+import { gamesHandlers } from "./handlers/games.handler";
+import { vipHandlers } from "./handlers/vip.handler";
+import { rpsHandlers } from "./handlers/games/rps.handler";
 import { randomChatService } from "../services/randomChat.service";
 
 // Middlewares
@@ -59,6 +66,20 @@ class TelegramBot {
     // ===================================
     this.bot.command("start", startHandler);
     
+    // دستور حالت سایلنت
+    this.bot.command("silent", async (ctx) => {
+      // بررسی چت فعال
+      if (await checkActiveChatAndRespond(ctx)) return;
+      return silentModeHandler.showSilentMenu(ctx);
+    });
+    
+    // دستور حذف اکانت
+    this.bot.command("deleted_account", async (ctx) => {
+      // بررسی چت فعال
+      if (await checkActiveChatAndRespond(ctx)) return;
+      return deleteAccountHandler.showDeleteAccountMenu(ctx);
+    });
+    
     // دستور پاک کردن پیام‌های چت مشخص: /delete_CHAT_ID
     this.bot.hears(/^\/delete_(\d+)$/, async (ctx) => {
       const chatId = parseInt(ctx.match[1]);
@@ -76,27 +97,49 @@ class TelegramBot {
     // ===================================
     this.bot.hears("👤 پروفایل من", async (ctx) => {
       logger.info(`📱 User ${ctx.from?.id} clicked Profile button`);
+      // بررسی چت فعال
+      if (await checkActiveChatAndRespond(ctx)) return;
       return profileHandlers.showProfileMenu(ctx);
     });
 
     this.bot.hears("💬 چت با ناشناس", requireCompleteProfile, async (ctx) => {
+      // بررسی چت فعال
+      if (await checkActiveChatAndRespond(ctx)) return;
       return randomChatHandler.showRandomChatMenu(ctx);
     });
 
     this.bot.hears("💰 سکه‌ها", requireCompleteProfile, async (ctx) => {
+      // بررسی چت فعال
+      if (await checkActiveChatAndRespond(ctx)) return;
       return coinHandler.showCoinsPage(ctx);
     });
 
     this.bot.hears("🎁 دعوت دوستان", requireCompleteProfile, async (ctx) => {
+      // بررسی چت فعال
+      if (await checkActiveChatAndRespond(ctx)) return;
       return coinHandler.showInvitePage(ctx);
     });
 
     this.bot.hears("🔍 جستجوی کاربران", requireCompleteProfile, async (ctx) => {
+      // بررسی چت فعال
+      if (await checkActiveChatAndRespond(ctx)) return;
       return userSearchHandlers.showSearchMenu(ctx);
     });
 
     this.bot.hears("⚙️ تنظیمات", requireCompleteProfile, async (ctx) => {
-      await ctx.reply("⚙️ بخش تنظیمات به زودی فعال می‌شود...");
+      // بررسی چت فعال
+      if (await checkActiveChatAndRespond(ctx)) return;
+      return settingsHandlers.showMainMenu(ctx, false);
+    });
+
+    this.bot.hears("👑 اشتراک VIP", requireCompleteProfile, async (ctx) => {
+      // بررسی چت فعال
+      if (await checkActiveChatAndRespond(ctx)) return;
+      return vipHandlers.showVipPurchaseMenu(ctx);
+    });
+
+    this.bot.hears("🎮 ارسال بازی", requireCompleteProfile, async (ctx) => {
+      return gamesHandlers.showGamesMenu(ctx);
     });
 
     // ===================================
@@ -157,6 +200,65 @@ class TelegramBot {
       return userSearchHandlers.handleGenderSelection(ctx, searchType, gender);
     });
 
+    // Province selection callbacks
+    this.bot.action(/^(search_\w+)_province_(\d+)$/, requireCompleteProfile, async (ctx) => {
+      await ctx.answerCbQuery();
+      const match = ctx.match;
+      const searchType = match[1];
+      const provinceId = parseInt(match[2]);
+      return userSearchHandlers.handleProvinceToggle(ctx, searchType, provinceId);
+    });
+
+    this.bot.action(/^(search_\w+)_province_all$/, requireCompleteProfile, async (ctx) => {
+      await ctx.answerCbQuery();
+      const match = ctx.match;
+      const searchType = match[1];
+      return userSearchHandlers.handleSelectAllProvinces(ctx, searchType);
+    });
+
+    // Next to age selection
+    this.bot.action(/^(search_\w+)_next_age$/, requireCompleteProfile, async (ctx) => {
+      await ctx.answerCbQuery();
+      return userSearchHandlers.showAgeRangeSelection(ctx);
+    });
+
+    // Age selection callbacks
+    this.bot.action(/^(search_\w+)_age_(\d+)$/, requireCompleteProfile, async (ctx) => {
+      await ctx.answerCbQuery();
+      const match = ctx.match;
+      const searchType = match[1];
+      const age = parseInt(match[2]);
+      return userSearchHandlers.handleAgeSelection(ctx, searchType, age);
+    });
+
+    this.bot.action(/^(search_\w+)_age_all$/, requireCompleteProfile, async (ctx) => {
+      await ctx.answerCbQuery();
+      return userSearchHandlers.handleSelectAllAges(ctx);
+    });
+
+    // Last activity selection callbacks
+    this.bot.action(/^(search_\w+)_activity_(1h|6h|1d|2d|3d|all)$/, requireCompleteProfile, async (ctx) => {
+      await ctx.answerCbQuery();
+      const match = ctx.match;
+      const searchType = match[1];
+      const activity = match[2];
+      return userSearchHandlers.handleActivitySelection(ctx, searchType, activity);
+    });
+
+    // Back navigation callbacks
+    this.bot.action(/^(search_\w+)_back_province$/, requireCompleteProfile, async (ctx) => {
+      await ctx.answerCbQuery();
+      const state = ctx.session.advancedSearch;
+      if (state) {
+        return userSearchHandlers.showProvinceSelection(ctx, state.searchType, state.gender!);
+      }
+    });
+
+    this.bot.action(/^(search_\w+)_back_age$/, requireCompleteProfile, async (ctx) => {
+      await ctx.answerCbQuery();
+      return userSearchHandlers.showAgeRangeSelection(ctx);
+    });
+
     // Page navigation callbacks
     this.bot.action(/^(search_\w+)_page_(\d+)(?:_(male|female|all))?$/, requireCompleteProfile, async (ctx) => {
       await ctx.answerCbQuery();
@@ -186,6 +288,12 @@ class TelegramBot {
     // ===================================
     // 📋 PROFILE ACTIONS
     // ===================================
+    
+    // ✅ بازگشت به پروفایل
+    this.bot.action("back_to_profile", async (ctx) => {
+      await ctx.answerCbQuery();
+      await profileHandlers.showProfileMenu(ctx);
+    });
     
     // ✅ Profile callback actions (عمومی - مانند gender, province, city, bio, photo)
     this.bot.action(/^profile_.*/, (ctx) =>
@@ -515,6 +623,218 @@ class TelegramBot {
     });
 
     // ===================================
+    // 🔕 SILENT MODE ACTIONS
+    // ===================================
+    
+    this.bot.action("silent_enable_30min", async (ctx) => {
+      await silentModeHandler.enableSilentMode(ctx, '30min');
+    });
+
+    this.bot.action("silent_enable_1hour", async (ctx) => {
+      await silentModeHandler.enableSilentMode(ctx, '1hour');
+    });
+
+    this.bot.action("silent_enable_forever", async (ctx) => {
+      await silentModeHandler.enableSilentMode(ctx, 'forever');
+    });
+
+    this.bot.action("silent_disable", async (ctx) => {
+      await silentModeHandler.handleDisableSilent(ctx);
+    });
+
+    // ===================================
+    // 🗑 DELETE ACCOUNT ACTIONS
+    // ===================================
+    
+    this.bot.action("delete_account", async (ctx) => {
+      await deleteAccountHandler.showDeleteAccountMenu(ctx);
+      await ctx.answerCbQuery();
+    });
+
+    this.bot.action("delete_account_payment", async (ctx) => {
+      await deleteAccountHandler.handlePaymentStep(ctx);
+    });
+
+    this.bot.action("delete_account_confirm", async (ctx) => {
+      await deleteAccountHandler.confirmDeleteAccount(ctx);
+    });
+
+    this.bot.action("delete_account_cancel", async (ctx) => {
+      await deleteAccountHandler.cancelDeleteAccount(ctx);
+    });
+
+    // ===================================
+    // ⚙️ SETTINGS ACTIONS
+    // ===================================
+    
+    this.bot.action("back_to_settings", async (ctx) => {
+      await ctx.answerCbQuery();
+      return settingsHandlers.showMainMenu(ctx, true);
+    });
+
+    this.bot.action("settings_silent_mode", async (ctx) => {
+      await ctx.answerCbQuery();
+      return silentModeHandler.showSilentMenu(ctx, true);
+    });
+
+    this.bot.action("settings_delete_account", async (ctx) => {
+      await ctx.answerCbQuery();
+      return deleteAccountHandler.showDeleteAccountMenu(ctx);
+    });
+
+    this.bot.action("settings_chat_filter", async (ctx) => {
+      await ctx.answerCbQuery();
+      return chatFilterHandler.showGenderSelection(ctx);
+    });
+
+    // ===================================
+    // 🎯 CHAT FILTER ACTIONS
+    // ===================================
+    
+    // فیلتر جنسیت
+    this.bot.action(/^chat_filter_gender_(male|female|all)$/, async (ctx) => {
+      const gender = ctx.match[1];
+      await chatFilterHandler.selectGender(ctx, gender);
+    });
+
+    // فیلتر فاصله
+    this.bot.action(/^chat_filter_distance_(.+)$/, async (ctx) => {
+      const distance = ctx.match[1];
+      await chatFilterHandler.selectDistance(ctx, distance);
+    });
+
+    // فیلتر سن
+    this.bot.action(/^chat_filter_age_(\d+|all)$/, async (ctx) => {
+      const age = ctx.match[1] === 'all' ? 'all' : parseInt(ctx.match[1]);
+      await chatFilterHandler.selectAge(ctx, age);
+    });
+
+    // تایید فیلتر
+    this.bot.action("chat_filter_confirm_visible", async (ctx) => {
+      await chatFilterHandler.confirmFilter(ctx, true);
+    });
+
+    this.bot.action("chat_filter_confirm_hidden", async (ctx) => {
+      await chatFilterHandler.confirmFilter(ctx, false);
+    });
+
+    // ===================================
+    // 🎮 GAMES ACTIONS
+    // ===================================
+    
+    this.bot.action("game_tic_tac_toe", async (ctx) => {
+      await ctx.answerCbQuery();
+      return gamesHandlers.selectTicTacToe(ctx);
+    });
+
+    this.bot.action("game_rock_paper_scissors", async (ctx) => {
+      await ctx.answerCbQuery();
+      return gamesHandlers.selectRockPaperScissors(ctx);
+    });
+
+    this.bot.action("game_truth_or_dare", async (ctx) => {
+      await ctx.answerCbQuery();
+      return gamesHandlers.selectTruthOrDare(ctx);
+    });
+
+    this.bot.action("game_vip_required", async (ctx) => {
+      return gamesHandlers.showVipRequired(ctx);
+    });
+
+    this.bot.action(/^send_game_(.+)$/, async (ctx) => {
+      const gameType = ctx.match[1];
+      await gamesHandlers.sendGameToChat(ctx, gameType);
+    });
+
+    this.bot.action("cancel_send_game", async (ctx) => {
+      await ctx.answerCbQuery();
+      return gamesHandlers.cancelSendGame(ctx);
+    });
+
+    this.bot.action("back_to_chat", async (ctx) => {
+      await ctx.answerCbQuery();
+      return gamesHandlers.backToChat(ctx);
+    });
+
+    // ===================================
+    // 🎮 ROCK PAPER SCISSORS GAME ACTIONS
+    // ===================================
+    
+    this.bot.action(/^rps_start_(\d+)$/, async (ctx) => {
+      return rpsHandlers.startRPSGame(ctx);
+    });
+
+    this.bot.action(/^rps_choice_(\d+)_(rock|paper|scissors)$/, async (ctx) => {
+      return rpsHandlers.makeRPSChoice(ctx);
+    });
+
+    this.bot.action(/^rps_locked_(\d+)$/, async (ctx) => {
+      return rpsHandlers.handleLockedChoice(ctx);
+    });
+
+    this.bot.action(/^rps_refresh_(\d+)$/, async (ctx) => {
+      return rpsHandlers.refreshRPSGame(ctx);
+    });
+
+    this.bot.action(/^rps_cancel_(\d+)$/, async (ctx) => {
+      await ctx.answerCbQuery();
+      return rpsHandlers.cancelRPSGame(ctx);
+    });
+
+    this.bot.action(/^rps_new_game_(\d+)$/, async (ctx) => {
+      await ctx.answerCbQuery();
+      return rpsHandlers.startNewRPSGame(ctx);
+    });
+
+    // ===================================
+    // 👑 VIP SUBSCRIPTION ACTIONS
+    // ===================================
+    
+    this.bot.action(/^buy_vip_(1|3|6|12)_month(s)?$/, async (ctx) => {
+      await ctx.answerCbQuery();
+      const duration = ctx.match[1] + '_month' + (ctx.match[2] || '');
+      return vipHandlers.selectVipPackage(ctx, duration);
+    });
+
+    this.bot.action(/^confirm_vip_(1|3|6|12)_month(s)?$/, async (ctx) => {
+      await ctx.answerCbQuery();
+      const duration = ctx.match[1] + '_month' + (ctx.match[2] || '');
+      return vipHandlers.confirmVipPurchase(ctx, duration);
+    });
+
+    this.bot.action("cancel_vip_purchase", async (ctx) => {
+      await ctx.answerCbQuery();
+      return vipHandlers.cancelVipPurchase(ctx);
+    });
+
+    this.bot.action("back_to_main_menu", async (ctx) => {
+      await ctx.answerCbQuery();
+      return vipHandlers.backToMainMenu(ctx);
+    });
+
+    // مدیریت پرداخت VIP
+    this.bot.on("pre_checkout_query", async (ctx) => {
+      return vipHandlers.handlePreCheckoutQuery(ctx);
+    });
+
+    this.bot.on(message("successful_payment"), async (ctx) => {
+      return vipHandlers.handleSuccessfulPayment(ctx);
+    });
+
+    // بازگشت به مراحل قبل
+    this.bot.action("chat_filter_back_gender", async (ctx) => {
+      await chatFilterHandler.goBack(ctx, "gender");
+    });
+
+    this.bot.action("chat_filter_back_distance", async (ctx) => {
+      await chatFilterHandler.goBack(ctx, "distance");
+    });
+
+    this.bot.action("chat_filter_back_age", async (ctx) => {
+      await chatFilterHandler.goBack(ctx, "age");
+    });
+
+    // ===================================
     // 🎲 RANDOM CHAT ACTIONS
     // ===================================
     
@@ -739,6 +1059,11 @@ class TelegramBot {
     try {
       await db.connect();
       await redisService.connect();
+
+      // ✅ Initialize storage for file uploads
+      const { storageService } = await import('../utils/storage');
+      await storageService.initializeStorage();
+      logger.info('✅ Storage initialized');
 
       await this.bot.telegram.deleteWebhook({ drop_pending_updates: true });
       logger.info("🗑️ Webhook deleted");

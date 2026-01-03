@@ -26,7 +26,8 @@ export const profileKeyboards = {
         Markup.button.callback("🚫 بلاک شده‌ها", "show_blocked_users"),
       ],
       [Markup.button.callback("📬 پیام‌های دایرکت", "view_direct_messages")],
-      [Markup.button.callback("🔙 بازگشت به منو", "main_menu")],
+      // [Markup.button.callback("🗑 حذف اکانت ربات", "delete_account")],
+      // [Markup.button.callback("🔙 بازگشت به منو", "main_menu")],
     ]),
 
   /**

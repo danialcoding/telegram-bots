@@ -1,6 +1,8 @@
 import { Context } from 'telegraf';
 import { mainMenuKeyboard } from '../keyboards/main.keyboard';
+import { activeChatKeyboard } from './randomChat.handler';
 import { userService } from '../../services/user.service';
+import { randomChatService } from '../../services/randomChat.service';
 import { COIN_REWARDS } from '../../utils/constants';
 import logger from '../../utils/logger';
 
@@ -90,6 +92,19 @@ export const startHandler = async (ctx: Context) => {
 
     // ✅ 4. چک کردن وجود پروفایل
     const hasProfile = await userService.hasProfile(user.id);
+
+    // ✅ 5. چک کردن چت فعال
+    const activeChat = await randomChatService.getUserActiveChat(user.id);
+    
+    // اگر کاربر در چت فعال است، کیبورد چت را نشان بده
+    if (activeChat) {
+      const safeModeEnabled = await randomChatService.isSafeModeEnabled(activeChat.id, user.id);
+      const welcomeMessage = `سلام ${firstName} عزیز! 👋\n\n` +
+        '🎉 شما در حال حاضر در یک چت فعال هستید.\n' +
+        'می‌توانید با استفاده از کیبورد زیر عملیات چت را انجام دهید.';
+      
+      return await ctx.reply(welcomeMessage, activeChatKeyboard(safeModeEnabled));
+    }
 
     // پیام خوش‌آمدگویی
     if (hasProfile) {

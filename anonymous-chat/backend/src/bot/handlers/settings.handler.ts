@@ -9,11 +9,10 @@ import logger from '../../utils/logger';
  */
 const settingsKeyboards = {
   main: () => Markup.inlineKeyboard([
-    [Markup.button.callback('🔔 تنظیمات اعلان‌ها', 'settings_notifications')],
-    [Markup.button.callback('🔒 حریم خصوصی', 'settings_privacy')],
-    [Markup.button.callback('🚫 لیست بلاک', 'settings_blocklist')],
-    [Markup.button.callback('🗑 حذف حساب', 'settings_delete_account')],
-    [Markup.button.callback('🔙 بازگشت', 'main_menu')],
+    [Markup.button.callback('🔕 حالت سایلنت', 'settings_silent_mode')],
+    [Markup.button.callback('🗑 حذف حساب کاربری', 'settings_delete_account')],
+    [Markup.button.callback('🎯 فیلتر درخواست چت', 'settings_chat_filter')],
+    [Markup.button.callback('🔙 بازگشت به منو اصلی', 'main_menu')],
   ]),
 
   notifications: (settings: any) => Markup.inlineKeyboard([
@@ -131,12 +130,19 @@ class SettingsHandlers {
   /**
    * نمایش منوی اصلی تنظیمات
    */
-  private async showMainMenu(ctx: Context) {
+  async showMainMenu(ctx: Context, editMessage: boolean = true) {
     const menuText =
-      `⚙️ تنظیمات\n\n` +
-      `از گزینه‌های زیر استفاده کنید:`;
+      `⚙️ تنظیمات پیشرفته\n\n` +
+      `از این بخش می‌توانید تنظیمات حساب خود را مدیریت کنید:\n\n` +
+      `🔕 حالت سایلنت: مدیریت دریافت درخواست‌های چت\n` +
+      `🗑 حذف حساب کاربری: حذف دائمی اکانت\n` +
+      `🎯 فیلتر درخواست چت: تعیین محدودیت برای دریافت درخواست چت`;
 
-    await ctx.editMessageText(menuText, settingsKeyboards.main());
+    if (editMessage && ctx.callbackQuery) {
+      await ctx.editMessageText(menuText, settingsKeyboards.main());
+    } else {
+      await ctx.reply(menuText, settingsKeyboards.main());
+    }
   }
 
   /**

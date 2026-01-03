@@ -716,7 +716,70 @@ export class UserService {
       throw error;
     }
   }
+
+  /**
+   * بررسی وضعیت VIP کاربر
+   */
+  async checkVipStatus(userId: number): Promise<{ isVip: boolean; expiresAt: Date | null }> {
+    try {
+      const result = await pool.query(
+        `SELECT is_vip, vip_expires_at 
+         FROM users 
+         WHERE id = $1`,
+        [userId]
+      );
+
+      if (result.rows.length === 0) {
+        return { isVip: false, expiresAt: null };
+      }
+
+      const user = result.rows[0];
+      const now = new Date();
+
+      // اگر VIP منقضی شده باشد، غیرفعال کن
+      if (user.is_vip && user.vip_expires_at && new Date(user.vip_expires_at) < now) {
+        await pool.query(
+          `UPDATE users 
+           SET is_vip = false, vip_expires_at = NULL 
+           WHERE id = $1`,
+          [userId]
+        );
+        return { isVip: false, expiresAt: null };
+      }
+
+      return {
+        isVip: user.is_vip || false,
+        expiresAt: user.vip_expires_at ? new Date(user.vip_expires_at) : null
+      };
+    } catch (error) {
+      logger.error('❌ Error checking VIP status:', error);
+      return { isVip: false, expiresAt: null };
+    }
+  }
+
+  /**
+   * فعال‌سازی اشتراک VIP
+   */
+  async activateVipSubscription(userId: number, durationDays: number): Promise<void> {
+    try {
+      const now = new Date();
+      const expiresAt = new Date(now.getTime() + durationDays * 24 * 60 * 60 * 1000);
+
+      await pool.query(
+        `UPDATE users 
+         SET is_vip = true, vip_expires_at = $1 
+         WHERE id = $2`,
+        [expiresAt, userId]
+      );
+
+      logger.info(`✅ VIP activated for user ${userId} until ${expiresAt.toISOString()}`);
+    } catch (error) {
+      logger.error('❌ Error activating VIP subscription:', error);
+      throw error;
+    }
+  }
 }
 
 export const userService = new UserService();
+
 

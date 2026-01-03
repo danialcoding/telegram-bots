@@ -129,74 +129,6 @@ class UserSearchService {
     }
   }
 
-  /**
-   * جستجوی پیشرفته
-   */
-  async advancedSearch(filters: SearchFilters, page: number = 1, limit: number = 10): Promise<UserSearchResult[]> {
-    try {
-      const offset = (page - 1) * limit;
-      const conditions: string[] = ['u.id != $1', 'u.is_blocked = FALSE'];
-      const params: any[] = [filters.userId, limit, offset];
-      let paramIndex = 4;
-
-      if (filters.province) {
-        conditions.push(`p.province = $${paramIndex}`);
-        params.splice(paramIndex - 1, 0, filters.province);
-        paramIndex++;
-      }
-
-      if (filters.gender) {
-        conditions.push(`p.gender = $${paramIndex}`);
-        params.splice(paramIndex - 1, 0, filters.gender);
-        paramIndex++;
-      }
-
-      if (filters.minAge) {
-        conditions.push(`p.age >= $${paramIndex}`);
-        params.splice(paramIndex - 1, 0, filters.minAge);
-        paramIndex++;
-      }
-
-      if (filters.maxAge) {
-        conditions.push(`p.age <= $${paramIndex}`);
-        params.splice(paramIndex - 1, 0, filters.maxAge);
-        paramIndex++;
-      }
-
-      if (filters.excludeBlocked !== false) {
-        conditions.push(`NOT EXISTS (
-          SELECT 1 FROM blocks 
-          WHERE (blocker_id = $1 AND blocked_id = u.id) 
-             OR (blocker_id = u.id AND blocked_id = $1)
-        )`);
-      }
-
-      const query = `
-        SELECT 
-          u.id, u.telegram_id, u.username, u.first_name,
-          p.display_name, p.gender, p.age, p.province, p.city, p.bio, p.latitude, p.longitude, 
-          p.photo_file_id, p.custom_id, p.likes_count,
-          u.is_online, u.last_activity,
-            EXISTS(
-              SELECT 1 FROM random_chats 
-              WHERE (user1_id = u.id OR user2_id = u.id) 
-              AND status = 'active'
-            ) as has_active_chat
-        FROM users u
-        INNER JOIN profiles p ON u.id = p.user_id
-        WHERE ${conditions.join(' AND ')}
-        ORDER BY u.last_activity DESC
-        LIMIT $2 OFFSET $3
-      `;
-
-      const result = await pool.query(query, params);
-      return result.rows;
-    } catch (error) {
-      logger.error('Error in advanced search:', error);
-      throw error;
-    }
-  }
-
   async searchNewUsers(userId: number, page: number = 1, limit: number = 10, gender?: string): Promise<UserSearchResult[]> {
     try {
       const offset = (page - 1) * limit;
@@ -307,30 +239,35 @@ class UserSearchService {
       const params = gender ? [userId, maxLimit, offset, gender] : [userId, maxLimit, offset];
 
       const result = await pool.query(
-        `WITH candidate_users AS (
+        `WITH recent_chat_users AS (
+          SELECT 
+            CASE 
+              WHEN rc.user1_id = $1 THEN rc.user2_id 
+              ELSE rc.user1_id 
+            END as partner_id,
+            MAX(rc.ended_at) as last_chat_time
+          FROM random_chats rc
+          WHERE (rc.user1_id = $1 OR rc.user2_id = $1)
+            AND rc.status = 'ended'
+            AND rc.ended_at >= NOW() - INTERVAL '7 days'
+          GROUP BY partner_id
+        ),
+        candidate_users AS (
           SELECT DISTINCT
             u.id, u.telegram_id, u.username, u.first_name,
             p.display_name, p.gender, p.age, p.province, p.city, p.bio, p.latitude, p.longitude, 
             p.photo_file_id, p.custom_id, p.likes_count,
             u.is_online, u.last_activity,
-            rc.ended_at,
+            rcu.last_chat_time,
             EXISTS(
               SELECT 1 FROM random_chats 
               WHERE (user1_id = u.id OR user2_id = u.id) 
               AND status = 'active'
             ) as has_active_chat
-          FROM random_chats rc
-          INNER JOIN users u ON (
-            CASE 
-              WHEN rc.user1_id = $1 THEN rc.user2_id 
-              ELSE rc.user1_id 
-            END = u.id
-          )
+          FROM recent_chat_users rcu
+          INNER JOIN users u ON rcu.partner_id = u.id
           INNER JOIN profiles p ON u.id = p.user_id
-          WHERE (rc.user1_id = $1 OR rc.user2_id = $1)
-            AND rc.status = 'ended'
-            AND rc.ended_at >= NOW() - INTERVAL '7 days'
-            AND u.is_blocked = FALSE
+          WHERE u.is_blocked = FALSE
             AND u.last_activity >= NOW() - INTERVAL '3 days'
             ${genderFilter}
             AND NOT EXISTS (
@@ -338,7 +275,7 @@ class UserSearchService {
               WHERE (blocker_id = $1 AND blocked_id = u.id) 
                  OR (blocker_id = u.id AND blocked_id = $1)
             )
-          ORDER BY u.is_online DESC, rc.ended_at DESC
+          ORDER BY u.is_online DESC, rcu.last_chat_time DESC
           LIMIT 300
         )
         SELECT * FROM candidate_users
@@ -578,6 +515,110 @@ class UserSearchService {
       return result.rows;
     } catch (error) {
       logger.error('Error getting users for inline query:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Advanced search with multiple filters
+   */
+  async advancedSearch(
+    userId: number,
+    page: number = 1,
+    limit: number = 10,
+    gender?: string,
+    minAge?: number,
+    maxAge?: number,
+    provinceIds?: number[],
+    activitySince?: Date
+  ): Promise<UserSearchResult[]> {
+    try {
+      const offset = (page - 1) * limit;
+      const maxLimit = Math.min(limit, 200);
+
+      let genderFilter = '';
+      let ageFilter = '';
+      let provinceFilter = '';
+      let activityFilter = '';
+      
+      const params: any[] = [userId, maxLimit, offset];
+      let paramIndex = 4;
+
+      if (gender) {
+        genderFilter = `AND p.gender = $${paramIndex}`;
+        params.push(gender);
+        paramIndex++;
+      }
+
+      if (minAge !== undefined && maxAge !== undefined) {
+        ageFilter = `AND p.age BETWEEN $${paramIndex} AND $${paramIndex + 1}`;
+        params.push(minAge, maxAge);
+        paramIndex += 2;
+      }
+
+      if (provinceIds && provinceIds.length > 0) {
+        provinceFilter = `AND p.province = ANY($${paramIndex})`;
+        params.push(provinceIds);
+        paramIndex++;
+      }
+
+      if (activitySince) {
+        activityFilter = `AND (u.is_online = true OR u.last_activity >= $${paramIndex})`;
+        params.push(activitySince);
+        paramIndex++;
+      }
+
+      logger.info('Executing advanced search query with params:', {
+        params,
+        genderFilter,
+        ageFilter,
+        provinceFilter,
+        activityFilter
+      });
+
+      const result = await pool.query(
+        `WITH candidate_users AS (
+          SELECT 
+            u.id, u.telegram_id, u.username, u.first_name,
+            p.display_name, p.gender, p.age, p.province, p.city, p.bio, p.latitude, p.longitude, 
+            p.photo_file_id, p.custom_id, p.likes_count,
+            u.is_online, u.last_activity,
+            EXISTS(
+              SELECT 1 FROM random_chats 
+              WHERE (user1_id = u.id OR user2_id = u.id) 
+              AND status IN ('active', 'waiting')
+            ) as has_active_chat
+          FROM users u
+          LEFT JOIN profiles p ON u.id = p.user_id
+          WHERE u.id != $1
+            AND u.is_blocked = false
+            AND p.gender IS NOT NULL
+            AND p.age IS NOT NULL
+            AND p.province IS NOT NULL
+            ${genderFilter}
+            ${ageFilter}
+            ${provinceFilter}
+            ${activityFilter}
+            AND NOT EXISTS (
+              SELECT 1 FROM blocks 
+              WHERE (blocker_id = $1 AND blocked_id = u.id) 
+                 OR (blocker_id = u.id AND blocked_id = $1)
+            )
+          ORDER BY u.is_online DESC, u.last_activity DESC, p.likes_count DESC
+          LIMIT $2 OFFSET $3
+        )
+        SELECT * FROM candidate_users`,
+        params
+      );
+
+      logger.info('Advanced search query result:', {
+        rowCount: result.rows.length,
+        users: result.rows.map((r: any) => ({ id: r.id, name: r.display_name || r.first_name, age: r.age, province: r.province, isOnline: r.is_online, lastActivity: r.last_activity }))
+      });
+
+      return result.rows;
+    } catch (error) {
+      logger.error('Error in advanced search:', error);
       throw error;
     }
   }

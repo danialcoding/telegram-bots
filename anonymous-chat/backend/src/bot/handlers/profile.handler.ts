@@ -6,6 +6,8 @@ import { blockService } from "../../services/block.service";
 import { directMessageService } from "../../services/directMessage.service";
 import { getBalance, deductCoins, hasEnoughCoins, rewardReferral, rewardSignup } from "../../services/coin.service";
 import { coinHandler } from "./coin.handler";
+import { silentModeHandler } from "./silent.handler";
+import { chatFilterHandler } from "./chatFilter.handler";
 import { COIN_REWARDS, COIN_COSTS, CHAT_REQUEST_COOLDOWN_MINUTES } from "../../utils/constants";
 import logger from "../../utils/logger";
 import { getLastSeenText, isUserOnline, getChatStatusText, parseIntPersian } from "../../utils/helpers";
@@ -113,6 +115,10 @@ class ProfileHandlers {
       // ✅ دریافت تعداد لایک‌ها
       const likesCount = await likeService.getLikesCount(profile.id);
 
+      // ✅ بررسی وضعیت VIP
+      const vipStatus = await userService.checkVipStatus(user.id);
+      const vipBadge = vipStatus.isVip ? '👑 VIP' : '';
+
       // ✅ بررسی وضعیت آنلاین بر اساس last_seen (نه is_online دیتابیس)
       const isOnline = isUserOnline(profile.last_seen);
       const statusText = getLastSeenText(profile.last_seen, isOnline);
@@ -123,7 +129,7 @@ class ProfileHandlers {
       const genderIcon = profile.gender === "male" ? "🙍‍♂️" : "🙍‍♀️";
       const locationEmoji = profile.latitude && profile.longitude ? "📍" : "❓";
       const profileText =
-        `👤 پروفایل شما\n\n` +
+        `👤 پروفایل شما ${vipBadge}\n\n` +
         `• نام: ${profile.display_name || profile.first_name}\n` +
         `• توضیحات: ${profile.bio || profile.first_name}\n` +
         `• جنسیت: ${genderIcon} ${profile.gender === "male" ? "پسر" : "دختر"}\n` +
@@ -196,6 +202,10 @@ class ProfileHandlers {
 
       const likesCount = await likeService.getLikesCount(profile.id);
 
+      // ✅ بررسی وضعیت VIP
+      const vipStatus = await userService.checkVipStatus(user.id);
+      const vipBadge = vipStatus.isVip ? ' 👑 VIP' : '';
+
       // ✅ بررسی وضعیت آنلاین بر اساس last_seen (نه is_online دیتابیس)
       const isOnline = isUserOnline(profile.last_seen);
       const statusText = getLastSeenText(profile.last_seen, isOnline);
@@ -205,7 +215,7 @@ class ProfileHandlers {
       const genderIcon = profile.gender === "male" ? "🙍‍♂️" : "🙍‍♀️";
       const locationEmoji = profile.latitude && profile.longitude ? "📍" : "❓";
       const profileText =
-        `👤 پروفایل شما\n\n` +
+        `👤 پروفایل شما${vipBadge}\n\n` +
         `• نام: ${profile.display_name || profile.first_name}\n` +
         `• توضیحات: ${profile.bio || profile.first_name}\n` +
         `• جنسیت: ${genderIcon} ${profile.gender === "male" ? "پسر" : "دختر"}\n` +
@@ -280,6 +290,10 @@ class ProfileHandlers {
 
     const likesCount = await likeService.getLikesCount(profile.id);
 
+    // ✅ بررسی وضعیت VIP
+    const vipStatus = await userService.checkVipStatus(user.id);
+    const vipBadge = vipStatus.isVip ? ' 👑 VIP' : '';
+
     // ✅ دریافت وضعیت آنلاین و چت فعال
     const fullProfile = await profileService.getFullProfile(user.id);
     const isOnline = fullProfile?.is_online
@@ -294,7 +308,7 @@ class ProfileHandlers {
     const genderIcon = profile.gender === "male" ? "🙍‍♂️" : "🙍‍♀️";
     const locationEmoji = profile.latitude && profile.longitude ? "📍" : "❓";
     const profileText =
-      `<b>👤 پروفایل شما</b>\n\n` +
+      `<b>👤 پروفایل شما${vipBadge}</b>\n\n` +
       `• نام: ${profile.display_name || profile.first_name}\n` +
       `• توضیحات: ${profile.bio || profile.first_name}\n` +
       `• جنسیت: ${genderIcon} ${profile.gender === "male" ? "پسر" : "دختر"}\n` +
@@ -1390,8 +1404,12 @@ class ProfileHandlers {
         }
       }
       
+      // ✅ بررسی وضعیت VIP
+      const targetVipStatus = await userService.checkVipStatus(targetUserId);
+      const vipBadge = targetVipStatus.isVip ? ' 👑 VIP' : '';
+      
       const profileText =
-        `👤 پروفایل کاربر\n\n` +
+        `👤 پروفایل کاربر${vipBadge}\n\n` +
         `• نام: ${profile.display_name || "نامشخص"}\n` +
         `• جنسیت: ${profile.gender === "male" ? "پسر" : "دختر"}\n` +
         `• استان: ${getProvinceById(profile.province)?.name || "نامشخص"}\n` +
@@ -1403,7 +1421,8 @@ class ProfileHandlers {
         `${profile.bio ? `\n📝 ${profile.bio}\n` : ""}` +
         `\n🆔 آیدی: /user_${profile.custom_id}\n` +
         getLastSeenText(profile.last_activity || null, isOnline) +
-        chatLine;
+        chatLine +
+        `${await chatFilterHandler.getFilterText(targetUserId) ? '\n\n' + await chatFilterHandler.getFilterText(targetUserId) : ''}`;
 
       // ✅ بررسی وضعیت بلاک
       const blockStatus = await blockService.getBlockStatus(
@@ -2009,6 +2028,23 @@ class ProfileHandlers {
           "⚠️ این کاربر در گفتگوی دیگری است.",
           { show_alert: true }
         );
+      }
+
+      // ✅ بررسی حالت سایلنت گیرنده
+      const isReceiverSilent = await silentModeHandler.isUserSilent(targetUserId);
+      if (isReceiverSilent) {
+        return await ctx.answerCbQuery(
+          "⚠️ این کاربر در حالت سایلنت است و درخواست چت دریافت نمی‌کند.",
+          { show_alert: true }
+        );
+      }
+
+      // ✅ بررسی فیلتر درخواست چت
+      const filterCheck = await chatFilterHandler.canSendChatRequest(user.id, targetUserId);
+      if (!filterCheck.allowed) {
+        return await ctx.answerCbQuery(filterCheck.message || "❌ امکان ارسال درخواست چت وجود ندارد.", {
+          show_alert: true,
+        });
       }
 
       // ✅ بررسی محدودیت زمانی (5 دقیقه)
